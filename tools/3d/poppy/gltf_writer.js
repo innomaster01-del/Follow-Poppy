@@ -44,7 +44,7 @@ function writeGLB(THREE, root, opts = {}) {
     // extra glTF looks (Filament renders them): velvet sheen for fur, a glossy clear coat for eyes
     const ext = (name, v) => { g.extensions = g.extensions || {}; g.extensions[name] = v; if (!gltf.extensionsUsed.includes(name)) gltf.extensionsUsed.push(name); };
     if (m.userData.sheen) ext('KHR_materials_sheen', { sheenColorFactor: m.userData.sheen.color, sheenRoughnessFactor: m.userData.sheen.roughness });
-    if (m.clearcoat) ext('KHR_materials_clearcoat', { clearcoatFactor: m.clearcoat, clearcoatRoughnessFactor: m.clearcoatRoughness ?? 0.1 });
+    if (m.clearcoat > 0) ext('KHR_materials_clearcoat', { clearcoatFactor: m.clearcoat, clearcoatRoughnessFactor: m.clearcoatRoughness ?? 0.1 });
     if (m.alphaTest > 0 && m.userData.rgba) { g.alphaMode = 'MASK'; g.alphaCutoff = m.alphaTest; }
     else if (m.transparent) g.alphaMode = 'BLEND';
     gltf.materials.push(g); matIdx.set(m, gltf.materials.length - 1); return gltf.materials.length - 1;

@@ -44,8 +44,6 @@ P.fur.forEach((m, i) => {
   if (m.alphaMap) m.userData.rgba = noise;
   // darker at the roots, lighter at the tips: the fur gets depth
   const f = i / (P.fur.length - 1); m.color.copy(baseFur).multiplyScalar(0.48 + 0.62 * Math.pow(f, 1.25));
-  // velvet: a light sheen of her own colour at grazing angles, stronger on the outer tips
-  const c = m.color; m.userData.sheen = { color: [Math.min(1, c.r * 0.5 + 0.35), Math.min(1, c.g * 0.5 + 0.35), Math.min(1, c.b * 0.5 + 0.35)], roughness: 0.45 };
 });
 
 // names for the parts the app and the clips move
@@ -59,17 +57,17 @@ function wrap(parent, name, kids, show) {
   for (const k of kids) if (k) { parent.remove(k); k.visible = true; w.add(k); }
   if (!show) hidden.add(w); return w;
 }
+// no clear coat / sheen in the GLB: SceneView loads glTF with Filament's ubershaders, which do not have every extension
+P.eyes.forEach(e => { e.ball.material.clearcoat = 0; });
 // eyes with depth: a coloured iris and a pupil under a glossy clear coat, the sparkles sitting on top
 const irisMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(gender === 'boy' ? 0x2f5d9e : 0x8a3a64).convertSRGBToLinear(), roughness: 0.3, metalness: 0 });
-irisMat.clearcoat = 1; irisMat.clearcoatRoughness = 0.05;
-const pupilMat = new THREE.MeshStandardMaterial({ color: 0x050307, roughness: 0.2, metalness: 0 }); pupilMat.clearcoat = 1; pupilMat.clearcoatRoughness = 0.05;
+const pupilMat = new THREE.MeshStandardMaterial({ color: 0x050307, roughness: 0.2, metalness: 0 });
 const SPH_E = new THREE.SphereGeometry(1, 28, 20);
 P.eyes.forEach(e => {
   const iris = new THREE.Mesh(SPH_E, irisMat); iris.scale.set(0.078, 0.1, 0.04); iris.position.set(0.004, -0.008, 0.02); e.g.add(iris);
   const pupil = new THREE.Mesh(SPH_E, pupilMat); pupil.scale.set(0.046, 0.06, 0.03); pupil.position.set(0.006, -0.006, 0.035); e.g.add(pupil);
   e.iris = iris; e.pupil = pupil;
   e.h1.position.z = 0.072; e.h2.position.z = 0.07; e.h1.scale.setScalar(0.033);
-  if (e.ball.material.clearcoat !== undefined) { e.ball.material.clearcoat = 1; e.ball.material.clearcoatRoughness = 0.08; }
 });
 P.eyes.forEach((e, i) => {
   const side = i ? 'R' : 'L';

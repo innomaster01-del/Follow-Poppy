@@ -69,15 +69,24 @@ private val SplashNight = Color(0xFF070B14)
 private fun Context.png(name: String): ImageBitmap? =
     runCatching { assets.open(name).use { BitmapFactory.decodeStream(it) }?.asImageBitmap() }.getOrNull()
 
+/** The opening's pictures, decoded off the main thread (so the first frame is not held up). */
+private class SplashArt(val girl: List<ImageBitmap?>, val boy: List<ImageBitmap?>, val logo: ImageBitmap?)
+
 /**
  * The opening: both Poppys, small, walk in from the two sides (her walk loop, rendered from her 3D model) leaving paw
- * prints behind them, meet in the middle and hop together; then the name rises under them. About 2.8 s; a tap skips it.
+ * prints behind them, meet in the middle and hop together; then the app's logo pops up above them and lights up, and
+ * the name rises. About 3.5 s; a tap skips it.
  */
 @Composable
 internal fun Splash(w: Words, onDone: () -> Unit) {
     val context = LocalContext.current
-    val girl = remember { List(8) { context.png("splash_girl_walk$it.png") } }
-    val boy = remember { List(8) { context.png("splash_boy_walk$it.png") } }
+    val art by androidx.compose.runtime.produceState<SplashArt?>(null) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            SplashArt(List(8) { context.png("splash_girl_walk$it.png") }, List(8) { context.png("splash_boy_walk$it.png") }, context.png("splash_logo.png"))
+        }
+    }
+    val logoIn = remember { Animatable(0f) }
+    val light = remember { Animatable(0f) }
     val glow = remember { Animatable(0f) }
     val walk = remember { Animatable(0f) }                                  // 0 at the screen edges … 1 met in the middle
     val hop = remember { Animatable(0f) }
@@ -87,14 +96,18 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
     var done by remember { mutableStateOf(false) }
     fun finish() { if (!done) { done = true; onDone() } }
     LaunchedEffect(Unit) { val t0 = withFrameMillis { it }; while (true) withFrameMillis { clock = (it - t0).toInt() } }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(art) {
+        if (art == null) return@LaunchedEffect                                  // starts when the pictures are ready
         coroutineScope {
             launch { glow.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
             launch { delay(120); walk.animateTo(1f, tween(1500, easing = LinearEasing)) }
             launch { delay(1650); hop.animateTo(1f, tween(200, easing = FastOutSlowInEasing)); hop.animateTo(0f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow)) }
-            launch { delay(1500); title.animateTo(1f, tween(600, easing = FastOutSlowInEasing)) }
+            // the logo pops up over them (a springy overshoot), then lights up: a glow swells and a shine sweeps across
+            launch { delay(1850); logoIn.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow)) }
+            launch { delay(2250); light.animateTo(1f, tween(750, easing = FastOutSlowInEasing)) }
+            launch { delay(2350); title.animateTo(1f, tween(600, easing = FastOutSlowInEasing)) }
         }
-        delay(500)
+        delay(450)
         out.animateTo(0f, tween(300, easing = LinearEasing))
         finish()
     }
@@ -127,13 +140,35 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
             val frame = if (walk.value < 1f) (clock / 70) % 8 else 0
             val e = ease(walk.value)
             val pw = wpx * 0.27f; val ph = pw * 305f / 248f
-            for ((side, frames) in listOf(-1f to girl, 1f to boy)) {
+            val a = art
+            for ((side, frames) in listOf(-1f to (a?.girl ?: emptyList()), 1f to (a?.boy ?: emptyList()))) {
+                if (frames.isEmpty()) continue
                 val img = frames[frame] ?: continue
                 val cxF = if (side < 0) -0.05f + (0.38f + 0.05f) * e else 1.05f - (1.05f - 0.62f) * e
                 val bob = if (walk.value < 1f) kotlin.math.abs(kotlin.math.sin(clock / 70.0 * Math.PI / 4)).toFloat() * ph * 0.03f else 0f
                 Image(img, null, Modifier
                     .offset { androidx.compose.ui.unit.IntOffset((cxF * wpx - pw / 2).toInt(), (hpx * 0.44f - ph * 0.62f - bob - hop.value * ph * 0.18f).toInt()) }
                     .size(with(androidx.compose.ui.platform.LocalDensity.current) { pw.toDp() }, with(androidx.compose.ui.platform.LocalDensity.current) { ph.toDp() }))
+            }
+        }
+        // the logo, above the two of them
+        art?.logo?.let { logo ->
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 96.dp).size(132.dp).graphicsLayer {
+                val k = logoIn.value; scaleX = 0.2f + 0.8f * k; scaleY = 0.2f + 0.8f * k; alpha = k.coerceIn(0f, 1f); translationY = (1 - k) * 40.dp.toPx()
+            }, contentAlignment = Alignment.Center) {
+                val l = light.value
+                Canvas(Modifier.size(132.dp).graphicsLayer { scaleX = 2.2f; scaleY = 2.2f }) {   // the glow as it lights up
+                    val g = kotlin.math.sin(l * Math.PI).toFloat() * 0.55f + l * 0.35f
+                    drawCircle(Brush.radialGradient(listOf(Pink.copy(alpha = 0.55f * g), Blue.copy(alpha = 0.25f * g), Color.Transparent)), size.minDimension / 2)
+                }
+                Image(logo, null, Modifier.size(132.dp).clip(RoundedCornerShape(30.dp)))
+                Canvas(Modifier.size(132.dp).clip(RoundedCornerShape(30.dp))) {           // a shine sweeping across
+                    if (l > 0f && l < 1f) {
+                        val x = -size.width * 0.6f + size.width * 2.2f * l
+                        drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.55f), Color.Transparent),
+                            Offset(x - size.width * 0.25f, 0f), Offset(x + size.width * 0.25f, size.height * 0.4f)))
+                    }
+                }
             }
         }
         Column(Modifier.align(Alignment.Center).padding(top = 230.dp).graphicsLayer { alpha = title.value; translationY = (1 - title.value) * 14.dp.toPx() },
@@ -161,7 +196,9 @@ private fun DrawScope.paw(c: Offset, angle: Float, s: Float, color: Color) {
 @Composable
 internal fun ChoosePoppy(w: Words, last: String?, onPick: (String) -> Unit) {
     val context = LocalContext.current
-    val imgs = remember { mapOf("girl" to context.png("splash_poppy_girl.png"), "boy" to context.png("splash_poppy_boy.png")) }
+    val imgs by androidx.compose.runtime.produceState<Map<String, ImageBitmap?>>(emptyMap()) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { mapOf("girl" to context.png("splash_poppy_girl.png"), "boy" to context.png("splash_poppy_boy.png")) }
+    }
     val enter = remember { Animatable(0f) }
     var picked by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { enter.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow)) }

@@ -19,7 +19,7 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           set -o pipefail
-          gradle :app:testDebugUnitTest :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+          gradle :app:testDebugUnitTest :app:assembleRelease :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
       - name: Publish build log
         if: always()
         run: |
@@ -29,9 +29,45 @@ jobs:
           cd $OUT && git init -q && git checkout -q -b build-output && git add -A
           git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "build ${{ github.run_number }}: ${{ steps.build.outcome }}"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" build-output
+      - name: Keep the debug APK for the emulator test
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with: { name: app-debug, path: app/build/outputs/apk/debug/app-debug.apk, retention-days: 3 }
       - name: Release
         if: steps.build.outcome == 'success'
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
           cp app/build/outputs/apk/release/app-release.apk Follow-Poppy.apk
           gh release create "build${{ github.run_number }}" Follow-Poppy.apk --title "Follow Poppy build ${{ github.run_number }}" --notes "Follow Poppy: פופי מובילה אותך ברגל" --latest
+
+  # the app on the ARCore emulator: opening, then the walk screen for a minute (catches crashes before you see them)
+  smoke:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: app-debug }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Emulator test
+        uses: reactivecircus/android-emulator-runner@v2
+        env: { GH_TOKEN: '${{ github.token }}' }
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -camera-back virtualscene -no-snapshot -noaudio -no-boot-anim
+          script: bash tools/smoke.sh
+      - name: Publish the emulator test
+        if: always()
+        run: |
+          OUT=$(mktemp -d); cp -r smoke/* $OUT/ 2>/dev/null || echo "no smoke output" > $OUT/summary.txt
+          cd $OUT && git init -q && git checkout -q -b smoke-output && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "smoke ${{ github.run_number }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" smoke-output
