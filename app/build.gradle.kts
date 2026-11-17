@@ -11,8 +11,8 @@ android {
         applicationId = "app.followpoppy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.4"
+        versionCode = 16
+        versionName = "2.5"
         // Mapbox public token (walking routes, search, map images) and an optional Google Cloud key with the ARCore API
         // (Street View VPS for metre-level accuracy): both from the repo secrets, never in the source
         buildConfigField("String", "MAPBOX_TOKEN", "\"${System.getenv("MAPBOX_TOKEN") ?: ""}\"")

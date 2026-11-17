@@ -319,3 +319,38 @@ class MoneyTest {
         assertEquals(listOf("USD" to "THB", "EUR" to "THB"), m.board)
     }
 }
+
+class SurfaceTest {
+    @Test fun profileInterpolatesAndKeepsNearFloor() {
+        val g = GroundProfile()
+        assertEquals(-1.4, g.heightAt(10.0, -1.4, 0.0), 1e-9)
+        g.observe(10.0, -1.0, 0); g.observe(14.0, -0.6, 0)
+        assertEquals(-1.4, g.heightAt(1.0, -1.4, 0.0), 1e-9)
+        val h = g.heightAt(12.0, -1.4, 0.0); assertTrue(h > -1.0 && h < -0.6)
+        val far = g.heightAt(30.0, -1.4, 0.0); assertTrue(far >= -0.6 && far <= -0.6 + 0.15 * GroundProfile.CARRY * 0.6 + 1e-9)
+    }
+    @Test fun profileNeedsAnOutlierThreeTimes() {
+        val o = GroundProfile(); repeat(5) { o.observe(20.0, -1.4, 0) }
+        o.observe(20.0, -0.4, 1); o.observe(20.0, -0.4, 2)
+        assertEquals(-1.4, o.heightAt(20.0, -1.4, 0.0), 0.01)
+        o.observe(20.0, -0.4, 3)
+        assertEquals(-0.4, o.heightAt(20.0, -1.4, 0.0), 0.01)
+    }
+    @Test fun confidenceWaitsAndEases() {
+        val c = SurfaceConfidence(); var t = 0L
+        fun run(ms: Long, tracking: Boolean, ago: Long, hits: Int, spread: Double, offset: Double = 0.0): SurfaceConfidence.State {
+            var s = c.state; val end = t + ms; while (t < end) { t += 33; s = c.update(t, tracking, ago, hits, spread, false, offset) }; return s
+        }
+        assertEquals(SurfaceConfidence.State.LOST, run(500, true, 100, 6, 0.05))
+        assertEquals(SurfaceConfidence.State.GOOD, run(700, true, 100, 6, 0.05))
+        run(600, true, 100, 6, 0.05); assertTrue(c.shown > 0.8)
+        assertEquals(SurfaceConfidence.State.GOOD, run(1500, true, 3000, 0, 9.0))
+        assertEquals(SurfaceConfidence.State.PARTIAL, run(1000, true, 3000, 0, 9.0))
+        assertTrue(c.reach(48.0) <= SurfaceConfidence.PARTIAL_REACH)
+        assertEquals(SurfaceConfidence.State.LOST, run(3500, true, 9000, 0, 9.0)); assertTrue(c.shown < 0.05)
+        assertEquals(SurfaceConfidence.State.GOOD, run(1200, true, 100, 6, 0.05))
+        assertEquals(SurfaceConfidence.State.LOST, run(3000, true, 3000, 0, 9.0, offset = 40.0))
+        assertNotEquals(SurfaceConfidence.State.BROKEN, run(300, false, 0, 0, 0.0))
+        assertEquals(SurfaceConfidence.State.BROKEN, run(400, false, 0, 0, 0.0))
+    }
+}

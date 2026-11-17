@@ -17,6 +17,11 @@ class GroundFinder(private val windowMs: Long = 2500) {
     fun count(now: Long): Int = ys.count { now - it.first < windowMs }
     /** A strong answer: a tap on the floor counts as several. */
     fun addStrong(t: Long, y: Double) { repeat(6) { add(t, y) } }
+    /** How far apart the recent answers are (m, 20th to 80th percentile): small = one steady floor. */
+    fun spread(now: Long): Double {
+        val r = ys.filter { now - it.first < windowMs }.map { it.second }.sorted()
+        return if (r.size < 3) Double.MAX_VALUE else r[(r.size * 0.8).toInt().coerceAtMost(r.size - 1)] - r[(r.size * 0.2).toInt()]
+    }
     fun estimate(now: Long): Double? {
         val recent = ys.filter { now - it.first < windowMs }.map { it.second }.sorted()
         return if (recent.size < 3) null else recent[(recent.size * 0.2).toInt()]

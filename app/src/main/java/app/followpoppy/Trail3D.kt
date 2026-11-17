@@ -68,16 +68,19 @@ class Trail3D(private val engine: Engine, private val materialLoader: MaterialLo
     fun hideAll() { ribbon?.isVisible = false; hideFrom(chevrons, 0); hideFrom(paws, 0); shadow?.isVisible = false }
 
     /**
-     * [route] in map metres, [toAr] maps a map point to the AR ground at height y, [you] your distance along the route,
-     * [poppy] her pose (her distance along it is [poppyAlong], NaN when she is off the route), [time] seconds.
+     * [route] in map metres, [toAr] maps a map point to the AR ground at height y, [ground] the street's height at a
+     * distance along the route, [you] your distance along the route, [reach] how far ahead the trail may go now (the
+     * surface confidence: shorter or none when the floor is not seen well), [poppy] her pose (her distance along it is
+     * [poppyAlong], NaN when she is off the route), [time] seconds.
      */
-    fun update(route: Route, toAr: (Enu, Double) -> V3, groundY: Double, you: Double, poppyAlong: Double, poppy: PoppyGuide.Pose, time: Double) {
+    fun update(route: Route, toAr: (Enu, Double) -> V3, ground: (Double) -> Double, you: Double, reach: Double, poppyAlong: Double, poppy: PoppyGuide.Pose, time: Double) {
         val line = route.line
-        val y0 = groundY + LIFT
+        fun y0(s: Double) = ground(s) + LIFT
         // how far to draw: up to FAR_TO ahead, but only a few metres past the next turn (so the way round the corner is
         // shown without a long bar through the houses beyond it)
         val nextTurn = route.steps.firstOrNull { it.along > you + FADE_TO && (it.modifier.contains("left") || it.modifier.contains("right")) && it.type != "arrive" }
-        val end = minOf(you + FAR_TO, route.length, nextTurn?.let { it.along + AFTER_TURN } ?: Double.MAX_VALUE)
+        val end = minOf(you + FAR_TO, route.length, nextTurn?.let { it.along + AFTER_TURN } ?: Double.MAX_VALUE, you + FADE_FROM + reach)
+        if (reach < 0.5) { hideAll(); return }
         val start = you + FADE_FROM
         if (roundedFor !== route) { rounded = RoundedRoute(line); roundedFor = route }
         val rr = rounded!!
@@ -86,10 +89,10 @@ class Trail3D(private val engine: Engine, private val materialLoader: MaterialLo
             if (end - start < 1.0) node.isVisible = false
             else {
                 // one surface: cross-sections on a fixed grid along the rounded route, edges straight, no overlaps
-                val secs = RibbonShape.sections(rr, start, end, RIBBON_WIDTH, FADE_TO - FADE_FROM, FAR_TO - FAR_FROM, SECTION_STEP, SECTIONS)
+                val secs = RibbonShape.sections(rr, start, end, RIBBON_WIDTH, FADE_TO - FADE_FROM, minOf(FAR_TO - FAR_FROM, (end - start) * 0.3), SECTION_STEP, SECTIONS)
                 val verts = ArrayList<Geometry.Vertex>(SECTIONS * 2)
                 for (sc in secs) for ((k, e) in listOf(0 to sc.left, 1 to sc.right)) {
-                    val p = toAr(e, y0)
+                    val p = toAr(e, y0(sc.s))
                     verts.add(Geometry.Vertex(position = Position(p.x.toFloat(), p.y.toFloat(), p.z.toFloat()), uvCoordinate = dev.romainguy.kotlin.math.Float2(k.toFloat(), sc.v.toFloat())))
                 }
                 runCatching { node.updateGeometry(vertices = verts, indices = listOf(ribbonIdx)) }.onFailure { Log.w("FollowPoppy", "ribbon update: ${it.message}") }
@@ -104,7 +107,7 @@ class Trail3D(private val engine: Engine, private val materialLoader: MaterialLo
         while (s < minOf(end - 2.0, route.length - 1.0)) {
             if (poppyAlong.isNaN() || kotlin.math.abs(s - poppyAlong) > 0.7) {
                 val n = take(chevrons, c, "models/trail_chevron.glb") ?: break
-                val p = toAr(line.at(s), y0 + 0.01); val q = toAr(line.at(s + 0.5), y0 + 0.01)
+                val p = toAr(line.at(s), y0(s) + 0.01); val q = toAr(line.at(s + 0.5), y0(s + 0.5) + 0.01)
                 place(n, p, atan2(q.x - p.x, q.z - p.z)); c++
             }
             s += CHEVRON_EVERY
@@ -118,7 +121,7 @@ class Trail3D(private val engine: Engine, private val materialLoader: MaterialLo
                 val d = i * PAW_EVERY; val side = if (i % 2 == 0) 1.0 else -1.0
                 val e = line.at(d); val f = line.at(d + 0.3); val dx = f.e - e.e; val dn = f.n - e.n; val l = hypot(dx, dn).coerceAtLeast(1e-6)
                 val off = Enu(e.e + (-dn / l) * PAW_SIDE * side, e.n + (dx / l) * PAW_SIDE * side)    // left / right of the line
-                val p = toAr(off, y0 + 0.006); val q = toAr(Enu(off.e + dx, off.n + dn), y0 + 0.006)
+                val p = toAr(off, y0(d) + 0.006); val q = toAr(Enu(off.e + dx, off.n + dn), y0(d + 0.3) + 0.006)
                 val n = take(paws, k, pawFile) ?: break
                 place(n, p, atan2(q.x - p.x, q.z - p.z) + side * 0.12, 1.25, 1.0, 1.25); k++; i++
             }

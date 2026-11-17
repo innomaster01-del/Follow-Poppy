@@ -60,7 +60,7 @@ class RoundedRoute(line: Polyline, radius: Double = RADIUS) {
  * Always [count] sections (the last repeats), so the mesh keeps the same size every frame.
  */
 object RibbonShape {
-    data class Section(val left: Enu, val right: Enu, val v: Double)
+    data class Section(val left: Enu, val right: Enu, val v: Double, val s: Double = 0.0)
 
     fun sections(r: RoundedRoute, start: Double, end: Double, width: Double, nearFade: Double, farFade: Double, step: Double, count: Int): List<Section> {
         val ss = ArrayList<Double>()
@@ -75,7 +75,7 @@ object RibbonShape {
             val left = Enu(p.e - d.n * h, p.n + d.e * h); val right = Enu(p.e + d.n * h, p.n - d.e * h)
             val a = s - start; val b = end - s
             val v = when { a < nf -> 0.5 * a / nf; b < ff -> 1 - 0.5 * b / ff; else -> 0.5 }
-            Section(left, right, v)
+            Section(left, right, v, s)
         }.toMutableList()
         while (out.size < count) out.add(out.last())
         return out
