@@ -14,7 +14,18 @@ def say(*a):
 
 token = os.environ.get("HF_TOKEN") or None
 say("space", space, "token", bool(token))
-client = Client(space, hf_token=token)
-api = client.view_api(return_format="dict", print_info=False)
-with open(os.path.join(out, "api.txt"), "w") as f: f.write(json.dumps(api, indent=1, default=str))
-say("endpoints", list(api.get("named_endpoints", {}).keys()))
+try:
+    client = Client(space, hf_token=token)
+    api = client.view_api(return_format="dict", print_info=False)
+    with open(os.path.join(out, "api.txt"), "w") as f: f.write(json.dumps(api, indent=1, default=str))
+    say("endpoints", list(api.get("named_endpoints", {}).keys()))
+except Exception:
+    say(traceback.format_exc())
+    # other image-to-3D Spaces to try
+    for alt in ["trellis-community/TRELLIS", "JeffreyXiang/TRELLIS", "tencent/Hunyuan3D-2"]:
+        try:
+            c = Client(alt, hf_token=token); a = c.view_api(return_format="dict", print_info=False)
+            with open(os.path.join(out, "api_" + alt.replace("/", "_") + ".txt"), "w") as f: f.write(json.dumps(a, indent=1, default=str))
+            say("ok", alt, list(a.get("named_endpoints", {}).keys()))
+        except Exception as e:
+            say("fail", alt, repr(e)[:300])
