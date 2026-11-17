@@ -46,26 +46,68 @@ class SidewalkSnap {
 }
 
 /**
- * Corrects the compass with your own walking: when you have walked a straight stretch along a straight part of the route,
- * the direction you moved in AR is the route's direction on the map. Returns (AR dx, AR dz, map bearing in degrees)
- * for GeoAlign.heading, or null.
+ * Corrects the compass with your own walking: while you are near the route and walk a straight stretch, the direction you
+ * moved in AR is the route's direction on the map there. It does not need your progress along the route to be right
+ * (a wrong compass is exactly what stops that from advancing), only that you stay near a straight part of the route and
+ * your walking is within [MAX_OFF] degrees of it. Returns (AR dx, AR dz, map bearing in degrees) for GeoAlign, or null.
  */
 class MotionHeading {
-    private var start: V3? = null; private var startAlong = 0.0
-    fun update(cam: V3, along: Double, offset: Double, line: Polyline): DoubleArray? {
-        val s0 = start
-        if (s0 == null || offset > 10 || along < startAlong - 1) { start = cam; startAlong = along; return null }
-        val walked = along - startAlong
+    private var start: V3? = null; private var last: V3? = null; private var path = 0.0
+    fun update(cam: V3, along: Double, offset: Double, line: Polyline, mapAngleOfAr: (Double, Double) -> Double): DoubleArray? {
+        val s0 = start; val l = last
+        if (s0 == null || l == null || offset > 12) { start = cam; last = cam; path = 0.0; return null }
+        path += hypot(cam.x - l.x, cam.z - l.z); last = cam
         val dx = cam.x - s0.x; val dz = cam.z - s0.z; val moved = hypot(dx, dz)
-        if (walked < 7 || moved < 6) return null
-        start = cam; startAlong = along
-        if (moved / walked !in 0.75..1.3) return null                           // you did not walk straight along the route
-        val b0 = bearing(line, startAlong - walked, startAlong - walked / 2); val b1 = bearing(line, startAlong - walked / 2, startAlong)
-        if (abs(GeoAlign.wrap(Math.toRadians(b1 - b0))) > Math.toRadians(12.0)) return null   // the route bends here
-        return doubleArrayOf(dx, dz, bearing(line, startAlong - walked, startAlong))
+        if (moved < 6) { if (path > 12) { start = cam; path = 0.0 }; return null }
+        val straight = path <= moved * 1.15
+        start = cam; path = 0.0
+        if (!straight) return null                                              // you did not walk straight
+        // the route around where you are must be straight
+        val b0 = bearing(line, along - 8, along); val b1 = bearing(line, along, along + 8)
+        if (abs(GeoAlign.wrap(Math.toRadians(b1 - b0))) > Math.toRadians(12.0)) return null
+        val route = bearing(line, along - 8, along + 8)
+        // where the current alignment says you walked, on the map; a big difference is a street crossing, not compass error
+        val walkedMap = mapAngleOfAr(dx, dz)
+        if (abs(GeoAlign.wrap(Math.toRadians(walkedMap - route))) > Math.toRadians(MAX_OFF)) return null
+        return doubleArrayOf(dx, dz, route)
     }
     private fun bearing(line: Polyline, s0: Double, s1: Double): Double {
-        val a = line.at(s0); val b = line.at(s1)
+        val a = line.at(s0.coerceIn(0.0, line.length)); val b = line.at(s1.coerceIn(0.0, line.length))
         return (Math.toDegrees(atan2(b.e - a.e, b.n - a.n)) + 360) % 360
+    }
+    companion object { const val MAX_OFF = 50.0 }
+}
+
+/**
+ * GPS without pulling you back: a fix describes where the phone was when it was measured (often most of a second
+ * before it arrives), so it is compared with the AR position at that moment, not the current one. ARCore's own tracking
+ * is far better over short distances, so after the start a fix only corrects slow drift (time constant grows with the
+ * fix's error), and a fix far from where AR says you are is ignored unless several in a row agree.
+ */
+class GpsBlend {
+    private val hist = ArrayDeque<Pair<Long, V3>>()
+    private var lastFixNs = 0L
+    private var outliers = 0
+    /** Record where the camera is now ([ns] = SystemClock.elapsedRealtimeNanos()). */
+    fun record(ns: Long, cam: V3) { hist.addLast(ns to cam); while (hist.size > 120) hist.removeFirst() }
+    /** The camera position when the fix was measured, or null when that is older than the history. */
+    fun camAt(ns: Long): V3? {
+        if (hist.isEmpty() || ns < hist.first().first) return null
+        var best = hist.last()
+        for (h in hist) if (abs(h.first - ns) < abs(best.first - ns)) best = h
+        return best.second
+    }
+    /**
+     * Gain for a fix measured at [ns] with accuracy [acc] m whose position disagrees with AR by [innovation] m.
+     * 0 = ignore it.
+     */
+    fun gain(ns: Long, acc: Double, innovation: Double, settled: Boolean): Double {
+        val dt = if (lastFixNs == 0L) 1.0 else ((ns - lastFixNs) / 1e9).coerceIn(0.1, 5.0); lastFixNs = ns
+        val a = acc.coerceAtLeast(3.0)
+        if (innovation > maxOf(3 * a, 25.0)) { outliers++; if (outliers < 4) return 0.0 } else outliers = 0
+        if (!settled) return (9.0 / (a * a)).coerceIn(0.02, 0.5)
+        if (a > 20) return 0.0
+        val tau = 8.0 + 2.0 * a                                               // ±5 m: 18 s, ±15 m: 38 s
+        return 1 - kotlin.math.exp(-dt / tau)
     }
 }

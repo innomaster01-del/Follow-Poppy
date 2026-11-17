@@ -239,12 +239,29 @@ class GroundAndSnapTest {
     @Test fun walkingStraightCorrectsTheCompass() {
         val line = Polyline(LatLng(32.0, 34.8), listOf(LatLng(32.0, 34.8), LatLng(32.001, 34.8)))   // north
         val m = MotionHeading()
-        assertNull(m.update(V3(0.0, 0.0, 0.0), 10.0, 2.0, line))
-        assertNull(m.update(V3(3.0, 0.0, 0.0), 13.0, 2.0, line))
-        val r = m.update(V3(8.0, 0.0, 0.0), 18.0, 2.0, line)!!                        // walked 8 m along +x in AR
+        val compassSays = { _: Double, _: Double -> 30.0 }                            // the compass is 30° off
+        assertNull(m.update(V3(0.0, 0.0, 0.0), 10.0, 2.0, line, compassSays))
+        assertNull(m.update(V3(3.0, 0.0, 0.0), 10.5, 2.0, line, compassSays))       // progress along the route barely moved
+        val r = m.update(V3(8.0, 0.0, 0.0), 11.0, 2.0, line, compassSays)!!         // walked 8 m along +x in AR
         assertEquals(8.0, r[0], 1e-9); assertEquals(0.0, r[1], 1e-9); assertEquals(0.0, r[2], 0.5)
         val a = GeoAlign(); a.heading(r[0], r[1], r[2], 1.0)
         assertEquals(PI / 2, a.yaw, 1e-6)                                              // AR +x is north
+        // crossing the street (90° to the route) is not taken for a compass error
+        val c = MotionHeading()
+        c.update(V3(0.0, 0.0, 0.0), 20.0, 2.0, line) { _, _ -> 90.0 }
+        assertNull(c.update(V3(0.0, 0.0, -8.0), 20.0, 6.0, line) { _, _ -> 90.0 })
+    }
+
+    @Test fun gpsComparesWithWhereYouWereAndOnlyCorrectsDrift() {
+        val g = GpsBlend()
+        for (i in 0..20) g.record(i * 100_000_000L, V3(i * 0.14, 0.0, 0.0))          // walking 1.4 m/s along +x
+        assertEquals(1.4, g.camAt(1_000_000_000L)!!.x, 1e-9)                          // where you were 1 s in
+        assertNull(GpsBlend().camAt(5L))
+        assertTrue(g.gain(1_000_000_000L, 5.0, 2.0, settled = true) < 0.08)           // a good fix: a small slow nudge
+        assertEquals(0.0, g.gain(2_000_000_000L, 30.0, 2.0, settled = true), 1e-9)    // a rough fix: ignored
+        assertEquals(0.0, g.gain(3_000_000_000L, 5.0, 60.0, settled = true), 1e-9)    // far from AR: ignored …
+        g.gain(4_000_000_000L, 5.0, 60.0, settled = true); g.gain(5_000_000_000L, 5.0, 60.0, settled = true)
+        assertTrue(g.gain(6_000_000_000L, 5.0, 60.0, settled = true) > 0.0)           // … unless it keeps saying so
     }
 }
 

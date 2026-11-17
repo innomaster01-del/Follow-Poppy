@@ -53,17 +53,25 @@ class MapboxApi(private val token: String, var language: String = "en") {
     }
 
     /**
-     * Places of one kind around [near] (Mapbox Search Box category search, up to 25), nearest first. If the category
-     * id is unknown there or nothing comes back, the same kind is searched by its name ([fallbackQuery]).
+     * Places of one kind around [near], nearest first: the Mapbox category ids in [categories] are tried in order (an id
+     * Mapbox does not know just finds nothing), then the kind's names in [queries] (local and English, so it works
+     * abroad). Everything only inside a box around you and within [radiusM] (Mapbox otherwise fills up with far-away
+     * matches); stops as soon as one way finds something close.
      */
-    fun nearby(category: String, fallbackQuery: String, near: LatLng, radiusM: Double = NEARBY_M): List<Place> {
-        // only inside a box around you (Mapbox otherwise fills up with far-away matches), then only what is really close
+    fun nearby(categories: List<String>, queries: List<String>, near: LatLng, radiusM: Double = NEARBY_M): List<Place> {
         val box = bboxAround(near, radiusM * 1.25)
-        val cat = runCatching {
-            parseSearchBox(get("https://api.mapbox.com/search/searchbox/v1/category/$category?limit=25&language=$language&proximity=${near.lng},${near.lat}&bbox=$box&access_token=$token"))
-        }.getOrElse { emptyList() }
-        val out = cat.ifEmpty { runCatching { searchBox(fallbackQuery, near, language, 10, box) }.getOrElse { emptyList() } }
-        return sortByDistance(out.filter { Geo.distance(near, it.at) <= radiusM }, near)
+        fun close(l: List<Place>) = l.filter { Geo.distance(near, it.at) <= radiusM }
+        for (c in categories) {
+            val found = close(runCatching {
+                parseSearchBox(get("https://api.mapbox.com/search/searchbox/v1/category/${URLEncoder.encode(c, "UTF-8")}?limit=25&language=$language&proximity=${near.lng},${near.lat}&bbox=$box&access_token=$token"))
+            }.getOrElse { emptyList() })
+            if (found.isNotEmpty()) return sortByDistance(found, near)
+        }
+        for (q in queries) {
+            val found = close(runCatching { searchBox(q, near, language, 10, box) }.getOrElse { emptyList() })
+            if (found.isNotEmpty()) return sortByDistance(found, near)
+        }
+        return emptyList()
     }
 
     private fun searchBox(q: String, near: LatLng?, lang: String, limit: Int, bbox: String? = null): List<Place> {
@@ -89,7 +97,7 @@ class MapboxApi(private val token: String, var language: String = "en") {
             route?.line?.geo?.last()?.let { "pin-s+f5b841(${it.lng},${it.lat})" },
         ).joinToString(",")
         val b = "%.0f".format(java.util.Locale.US, (bearing % 360 + 360) % 360)
-        return "https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/static/" + (if (overlays.isEmpty()) "" else "$overlays/") +
+        return "https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/" + (if (overlays.isEmpty()) "" else "$overlays/") +
             "${center.lng},${center.lat},${"%.2f".format(java.util.Locale.US, zoom)},$b/${w}x$h@2x?attribution=false&logo=false&access_token=$token"
     }
 

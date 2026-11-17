@@ -92,6 +92,12 @@ internal fun DrawScope.lineIcon(kind: String, color: Color) {
             drawCircle(color, w * 0.11f, Offset(w * 0.5f, h * 0.5f), style = st)
             drawCircle(color, w * 0.035f, Offset(w * 0.22f, h * 0.5f)); drawCircle(color, w * 0.035f, Offset(w * 0.78f, h * 0.5f))
         }
+        "exchange" -> {                                                                // two arrows going round (swap)
+            drawArc(color, 200f, 140f, false, Offset(w * 0.16f, h * 0.18f), Size(w * 0.68f, h * 0.64f), style = st)
+            drawArc(color, 20f, 140f, false, Offset(w * 0.16f, h * 0.18f), Size(w * 0.68f, h * 0.64f), style = st)
+            drawPath(Path().apply { moveTo(w * 0.70f, h * 0.10f); lineTo(w * 0.80f, h * 0.30f); lineTo(w * 0.58f, h * 0.32f) }, color, style = st)
+            drawPath(Path().apply { moveTo(w * 0.30f, h * 0.90f); lineTo(w * 0.20f, h * 0.70f); lineTo(w * 0.42f, h * 0.68f) }, color, style = st)
+        }
         "bakery" -> {                                                                  // a croissant-ish loaf with scores
             drawPath(Path().apply { moveTo(w * 0.10f, h * 0.70f); cubicTo(w * 0.10f, h * 0.30f, w * 0.90f, h * 0.30f, w * 0.90f, h * 0.70f); close() }, color, style = st)
             for (x in listOf(0.36f, 0.5f, 0.64f)) drawLine(color, Offset(w * x - w * 0.05f, h * 0.60f), Offset(w * x + w * 0.04f, h * 0.44f), st.width * 0.8f, StrokeCap.Round)

@@ -83,19 +83,23 @@ private val PoppyPink = Color(0xFFFF8CC6); private val PoppyBlue = Color(0xFF6CB
 /** A walk longer than this asks first ("are you sure?"). */
 internal const val FAR_M = 5000.0
 
-/** The quick "what's around me" buttons: Mapbox category id, label (he / en), and a name to search by if the id finds nothing. */
-internal class Kind(val id: String, val he: String, val en: String, val query: String)
+/**
+ * The quick "what's around me" buttons: icon id, label (he / en), the Mapbox category ids to try in order, and names to
+ * search by (local and English, so it works abroad too) when no category id finds anything nearby.
+ */
+internal class Kind(val id: String, val he: String, val en: String, val cats: List<String>, val queries: List<String>)
 internal val KINDS = listOf(
-    Kind("coffee", "קפה", "Coffee", "בית קפה"),
-    Kind("restaurant", "אוכל", "Food", "מסעדה"),
-    Kind("supermarket", "סופרמרקט", "Supermarket", "סופרמרקט"),
-    Kind("pharmacy", "בית מרקחת", "Pharmacy", "בית מרקחת"),
-    Kind("atm", "כספומט", "ATM", "כספומט"),
-    Kind("bakery", "מאפייה", "Bakery", "מאפייה"),
-    Kind("park", "פארק", "Park", "פארק"),
-    Kind("bus_stop", "תחנת אוטובוס", "Bus stop", "תחנת אוטובוס"),
-    Kind("gas_station", "תחנת דלק", "Gas station", "תחנת דלק"),
-    Kind("hospital", "בית חולים", "Hospital", "בית חולים"),
+    Kind("coffee", "קפה", "Coffee", listOf("coffee", "cafe"), listOf("בית קפה", "coffee")),
+    Kind("restaurant", "אוכל", "Food", listOf("restaurant", "fast_food"), listOf("מסעדה", "restaurant")),
+    Kind("supermarket", "סופרמרקט", "Supermarket", listOf("supermarket", "grocery", "convenience_store"), listOf("סופרמרקט", "supermarket")),
+    Kind("pharmacy", "בית מרקחת", "Pharmacy", listOf("pharmacy"), listOf("בית מרקחת", "pharmacy")),
+    Kind("atm", "כספומט", "ATM", listOf("atm", "atm_machine", "bank"), listOf("ATM", "כספומט", "bank")),
+    Kind("exchange", "המרת כסף", "Exchange", listOf("currency_exchange", "money_exchange", "bureau_de_change"), listOf("currency exchange", "המרת מטבע", "צ'יינג'", "money exchange")),
+    Kind("bakery", "מאפייה", "Bakery", listOf("bakery"), listOf("מאפייה", "bakery")),
+    Kind("park", "פארק", "Park", listOf("park"), listOf("פארק", "park")),
+    Kind("bus_stop", "תחנת אוטובוס", "Bus stop", listOf("bus_stop", "bus_station"), listOf("תחנת אוטובוס", "bus stop")),
+    Kind("gas_station", "תחנת דלק", "Gas station", listOf("gas_station", "fuel"), listOf("תחנת דלק", "gas station")),
+    Kind("hospital", "בית חולים", "Hospital", listOf("hospital", "emergency_room"), listOf("בית חולים", "hospital")),
 )
 
 /** Press feedback: shrinks a touch on finger-down, springs back on release. */
@@ -139,7 +143,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
         val h = aroundAt ?: return@LaunchedEffect
         around = null
         around = withContext(Dispatchers.IO) {
-            KINDS.map { k -> async { runCatching { api.nearby(k.id, k.query, h, 1500.0).take(2).map { k to it } }.getOrElse { emptyList() } } }.awaitAll().flatten()
+            KINDS.map { k -> async { runCatching { api.nearby(k.cats, k.queries, h, 1500.0).take(2).map { k to it } }.getOrElse { emptyList() } } }.awaitAll().flatten()
                 .distinctBy { it.second.id.ifEmpty { it.second.name } }.sortedBy { Geo.distance(h, it.second.at) }.take(10)
         }
     }
@@ -157,7 +161,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
         val h = here ?: run { error = w.t("מחכה למיקום שלך…", "Waiting for your location…"); return }
         busy = true; error = null; far = null; kind = k
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { api.nearby(k.id, k.query, h) } }
+            runCatching { withContext(Dispatchers.IO) { api.nearby(k.cats, k.queries, h) } }
                 .onSuccess { results = it; if (it.isEmpty()) error = w.t("לא מצאתי ${k.he} קרוב אליך", "No ${k.en.lowercase()} found near you") }
                 .onFailure { error = it.message }
             busy = false

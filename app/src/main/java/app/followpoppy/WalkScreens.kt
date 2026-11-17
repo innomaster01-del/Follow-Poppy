@@ -94,6 +94,9 @@ import androidx.core.content.ContextCompat
 import com.google.ar.core.Config
 import com.google.ar.core.DepthPoint
 import com.google.ar.core.Plane
+import com.google.ar.core.Anchor
+import com.google.ar.core.HitResult
+import com.google.ar.core.StreetscapeGeometry
 import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
@@ -164,8 +167,10 @@ fun WalkApp(smoke: Boolean = false, testDest: LatLng? = null, testFrom: LatLng? 
         var token by remember { mutableStateOf(BuildConfig.MAPBOX_TOKEN.ifEmpty { prefs.getString("mapbox", "") ?: "" }) }
         if (token.isEmpty()) { TokenScreen(w) { t -> prefs.edit().putString("mapbox", t).apply(); token = t }; return@CompositionLocalProvider }
         // the opening animation first (before the permission dialogs, so they don't cover it)
-        var intro by remember { mutableStateOf(!smoke && testDest == null) }
-        if (intro) { Splash(w, prefs.getString("poppy", "girl") ?: "girl") { intro = false }; return@CompositionLocalProvider }
+        // 0 = the walking-in animation, 1 = boy or girl?, 2 = the app
+        var intro by remember { mutableStateOf(if (smoke || testDest != null) 2 else 0) }
+        if (intro == 0) { Splash(w) { intro = 1 }; return@CompositionLocalProvider }
+        if (intro == 1) { ChoosePoppy(w, prefs.getString("poppy", null)) { g -> prefs.edit().putString("poppy", g).apply(); intro = 2 }; return@CompositionLocalProvider }
         val api = remember(token, lang) { MapboxApi(token, lang) }
         val sensors = remember { WalkSensors(context) }
         var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
@@ -197,6 +202,14 @@ private fun TokenScreen(w: Words, onSave: (String) -> Unit) {
 /** Labels and bubbles stay below this (dp): the instruction card and the hints live above it. */
 private const val TOP_CLEAR = 235f
 
+/** A hit on the floor: an upward plane, a depth point on an upward surface, or Google's terrain mesh (Streetscape). */
+private fun floorHit(hr: HitResult, minUp: Float = 0.8f, inPolygon: Boolean = true): Boolean = when (val t = hr.trackable) {
+    is Plane -> t.type == Plane.Type.HORIZONTAL_UPWARD_FACING && (!inPolygon || t.isPoseInPolygon(hr.hitPose))
+    is DepthPoint -> hr.hitPose.yAxis[1] > minUp
+    is StreetscapeGeometry -> t.type == StreetscapeGeometry.Type.TERRAIN
+    else -> false
+}
+
 /** Where on the camera view (fractions of width, height) the app asks ARCore for the street's height. */
 private val GROUND_PROBES = listOf(floatArrayOf(0.5f, 0.72f), floatArrayOf(0.3f, 0.82f), floatArrayOf(0.7f, 0.82f), floatArrayOf(0.5f, 0.9f), floatArrayOf(0.2f, 0.95f), floatArrayOf(0.8f, 0.95f))
 
@@ -221,7 +234,6 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
     var dark by remember { mutableStateOf(false) }
     var lookUp by remember { mutableStateOf(0L) }
     var miniMap by remember { mutableStateOf<Bitmap?>(null) }
-    var bigMap by remember { mutableStateOf<Bitmap?>(null) }
     var heading by remember { mutableStateOf(0.0) }
     var bubble by remember { mutableStateOf<PoppyGuide.Say?>(null) }
     var partyAt by remember { mutableStateOf(0L) }
@@ -245,8 +257,11 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
     val holder = remember { object {
         var lastFix = 0L; var lastNav = 0L; var groundY = Double.NaN; var rerouting = false; var lastReroute = 0L; var geoConfigured = false; var userGeo: LatLng? = null
         var lastTs = 0L; var alignTs = 0L; var frames = 0L; var poppyGround = Double.NaN; var poppyGroundAt = 0L; var lastSay = 0; var turns: List<PoppyGuide.Turn> = emptyList()
-        val ground = GroundFinder(); val snap = SidewalkSnap(); val motion = MotionHeading(); var routeAcc = 0.0; var startedAt = SystemClock.uptimeMillis()
+        val ground = GroundFinder(); val snap = SidewalkSnap(); val motion = MotionHeading(); val gps = GpsBlend(); var routeAcc = 0.0; var startedAt = SystemClock.uptimeMillis()
         var courseFrom: V3? = null; var courseAt = 0L; var lastTurnBuzz = 0L; var ticks = 0L; var wallDist = 99.0; var wallAt = 0L
+        var streetscape = false; var occluding = false; var occluder: com.google.android.filament.MaterialInstance? = null
+        val buildings = HashMap<StreetscapeGeometry, io.github.sceneview.ar.node.StreetscapeGeometryNode>()
+        @Volatile var terrainY = Double.NaN; @Volatile var terrainAt = 0L; @Volatile var terrainBusy = false; var terrainAsk = 0L
         val dots = ArrayDeque<V3>(); @Volatile var tap: FloatArray? = null; var tapped = false; var lookFrom = 0L; var foundAt = 0L
     } }
     val tts = remember { arrayOfNulls<TextToSpeech>(1) }
@@ -300,7 +315,6 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                 val h = if (heading.isNaN()) 0.0 else heading
                 runCatching { withContext(Dispatchers.IO) {
                     miniMap = URL(api.staticMapUrl(r, at, 16.6, h, 200, 200)).openStream().use { BitmapFactory.decodeStream(it) }
-                    if (mapMode || bigMap == null) bigMap = URL(api.staticMapUrl(r, at, 16.0, h, 400, 700)).openStream().use { BitmapFactory.decodeStream(it) }
                 } }.onFailure { Log.w(TAG, "map image: ${it.message}") }
                 if (smoke) miniMap?.let { DebugCapture.screen("walk_minimap", it, 300) }
             }
@@ -322,9 +336,19 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     holder.geoConfigured = true
                     runCatching {
                         val c = session.config; var changed = false
-                        if (BuildConfig.AR_GEO_KEY.isNotEmpty() && session.isGeospatialModeSupported(Config.GeospatialMode.ENABLED)) { c.geospatialMode = Config.GeospatialMode.ENABLED; changed = true }
-                        if (changed) session.configure(c)
-                        Log.i(TAG, "session geo=${c.geospatialMode} depth=${c.depthMode}")
+                        if (BuildConfig.AR_GEO_KEY.isNotEmpty() && session.isGeospatialModeSupported(Config.GeospatialMode.ENABLED)) {
+                            c.geospatialMode = Config.GeospatialMode.ENABLED
+                            // Google's 3D model of the street around you: terrain to stand the trail on, buildings to hide
+                            // Poppy behind; with depth on it also gives ARCore's long-range Geospatial Depth
+                            c.streetscapeGeometryMode = Config.StreetscapeGeometryMode.ENABLED
+                            changed = true
+                        }
+                        if (changed) runCatching { session.configure(c) }.onFailure {
+                            Log.w(TAG, "streetscape not available: ${it.message}")
+                            c.streetscapeGeometryMode = Config.StreetscapeGeometryMode.DISABLED; session.configure(c)
+                        }
+                        holder.streetscape = c.streetscapeGeometryMode == Config.StreetscapeGeometryMode.ENABLED
+                        Log.i(TAG, "session geo=${c.geospatialMode} streetscape=${c.streetscapeGeometryMode} depth=${c.depthMode}")
                     }.onFailure { Log.w(TAG, "session config: ${it.message}") }
                 }
                 val cam = frame.camera
@@ -360,6 +384,17 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         val fe = -(2 * (qx * qz + qw * qy)); val fs = -(1 - 2 * (qx * qx + qy * qy))
                         val gh = (Math.toDegrees(kotlin.math.atan2(fe, -fs)) + 360) % 360
                         val hAcc = gp.orientationYawAccuracy
+                        // the ground right under you from Google's terrain (a terrain anchor), every few seconds
+                        val tNowT = SystemClock.uptimeMillis()
+                        if (gp.horizontalAccuracy < 8 && gp.verticalAccuracy < 2.0 && !holder.terrainBusy && tNowT - holder.terrainAsk > 2500) {
+                            holder.terrainBusy = true; holder.terrainAsk = tNowT
+                            runCatching {
+                                earth.resolveAnchorOnTerrainAsync(gp.latitude, gp.longitude, 0.0, 0f, 0f, 0f, 1f) { anchor, state ->
+                                    if (state == Anchor.TerrainAnchorState.SUCCESS) { holder.terrainY = anchor.pose.ty().toDouble(); holder.terrainAt = SystemClock.uptimeMillis() }
+                                    runCatching { anchor.detach() }; holder.terrainBusy = false
+                                }
+                            }.onFailure { holder.terrainBusy = false; Log.w(TAG, "terrain anchor: ${it.message}") }
+                        }
                         if (gp.horizontalAccuracy < 6 && hAcc < 20) {
                             align.headingSoft(fx, fz, gh, per(if (hAcc < 6) 0.5 else 2.0))
                             align.positionSoft(camPos, Geo.toEnu(origin, LatLng(gp.latitude, gp.longitude)), per(if (gp.horizontalAccuracy < 2.5) 0.5 else 2.0))
@@ -376,13 +411,38 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         val l = sensors.location
                         if (l != null && l.time != holder.lastFix) {
                             holder.lastFix = l.time
+                            // compared with where the phone was when the fix was measured, and once walking only a slow
+                            // drift correction: GPS must never pull you back while ARCore sees you walking forward
                             val acc = l.accuracy.toDouble().coerceAtLeast(3.0)
                             val at = Geo.toEnu(origin, LatLng(l.latitude, l.longitude))
-                            if (!settled) align.position(camPos, at, (9.0 / (acc * acc)).coerceIn(0.02, 0.5))
-                            else if (acc <= 20) align.positionSoft(camPos, at, (9.0 / (acc * acc)).coerceIn(0.01, 0.12))   // a rough fix is ignored
+                            val then = holder.gps.camAt(l.elapsedRealtimeNanos) ?: camPos
+                            val inn = if (align.ready) align.toEnu(then).let { hypot(it.e - at.e, it.n - at.n) } else 0.0
+                            val g = holder.gps.gain(l.elapsedRealtimeNanos, acc, inn, settled)
+                            if (g > 0) {
+                                // the fix moves the phone's position at that moment; shift by the walk since, so it applies now
+                                val nowAt = if (align.ready) align.toEnu(camPos).let { c -> align.toEnu(then).let { p -> Enu(at.e + c.e - p.e, at.n + c.n - p.n) } } else at
+                                if (!settled) align.position(camPos, nowAt, g) else align.positionSoft(camPos, nowAt, g)
+                            }
                         } else if (testFrom != null && !align.ready) align.position(camPos, Geo.toEnu(origin, testFrom), 1.0)
                     }
+                    // buildings from Google's street model, drawn invisibly so Poppy and the trail hide behind them;
+                    // only while VPS has placed you precisely (a misplaced building would hide her for nothing)
+                    if (holder.streetscape) {
+                        refs.trailRoot?.let { root ->
+                            for (g in frame.getUpdatedTrackables(StreetscapeGeometry::class.java)) {
+                                if (g.type != StreetscapeGeometry.Type.BUILDING) continue
+                                val node = holder.buildings[g] ?: if (holder.buildings.size >= 250) null else runCatching {
+                                    val mat = holder.occluder ?: materialLoader.createOcclusionInstance().also { holder.occluder = it }
+                                    io.github.sceneview.ar.node.StreetscapeGeometryNode(engine, g, mat, builder = { priority(0); castShadows(false); receiveShadows(false) })
+                                        .also { it.isVisible = holder.occluding; root.addChildNode(it); holder.buildings[g] = it }
+                                }.onFailure { Log.w(TAG, "building: ${it.message}") }.getOrNull()
+                                node?.update(g)
+                            }
+                        }
+                        if (usedVps != holder.occluding) { holder.occluding = usedVps; holder.buildings.values.forEach { it.isVisible = usedVps } }
+                    }
                     align.tick(adt, camPos, if (settled) 0.9 else 0.3)
+                    holder.gps.record(SystemClock.elapsedRealtimeNanos(), camPos)
                     vps = usedVps; aligned = align.ready
                     heading = (Math.toDegrees(align.arAngle(fx, fz) - align.yaw) + 360) % 360
                     // the street's height: hit tests at several points low in the view (floor planes and depth), floor = low
@@ -392,7 +452,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         runCatching { frame.hitTest(viewW * pr[0], viewH * pr[1]) }.getOrNull()?.firstOrNull { hr ->
                             val y = hr.hitPose.ty(); val t = hr.trackable
                             // the floor only: below hip height, and for depth points a surface facing up (not a wall or a fence)
-                            y < camPos.y - 0.9 && y > camPos.y - 2.2 && ((t is Plane && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING && t.isPoseInPolygon(hr.hitPose)) || (t is DepthPoint && hr.hitPose.yAxis[1] > 0.8f))
+                            y < camPos.y - 0.9 && y > camPos.y - 2.2 && floorHit(hr)
                         }?.let { hr ->
                             holder.ground.add(tNow, hr.hitPose.ty().toDouble())
                             if (calib < 2) { holder.dots.addLast(V3(hr.hitPose.tx().toDouble(), hr.hitPose.ty().toDouble(), hr.hitPose.tz().toDouble())); while (holder.dots.size > 60) holder.dots.removeFirst() }
@@ -402,17 +462,19 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         holder.tap = null
                         runCatching { frame.hitTest(tp[0], tp[1]) }.getOrNull()?.firstOrNull { hr ->
                             val y = hr.hitPose.ty(); val t = hr.trackable
-                            y < camPos.y - 0.6 && y > camPos.y - 2.4 && ((t is Plane && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) || (t is DepthPoint && hr.hitPose.yAxis[1] > 0.7f))
+                            y < camPos.y - 0.6 && y > camPos.y - 2.4 && floorHit(hr, 0.7f, false)
                         }?.let { hr -> holder.ground.addStrong(tNow, hr.hitPose.ty().toDouble()); holder.tapped = true; buzz(30) }
                     }
                     val found = holder.ground.estimate(tNow)
-                    val gy = found ?: (camPos.y - 1.4)
+                    // nothing seen on the floor: Google's terrain under you if fresh, else 1.4 m below the phone
+                    val terrain = holder.terrainY.takeIf { !it.isNaN() && tNow - holder.terrainAt < 10_000 && it < camPos.y - 0.8 && it > camPos.y - 2.2 }
+                    val gy = found ?: terrain ?: (camPos.y - 1.4)
                     holder.groundY = when {
                         holder.groundY.isNaN() -> gy
                         calib == 2 && kotlin.math.abs(gy - holder.groundY) < 0.04 -> holder.groundY                // a few cm of noise: keep still
                         else -> holder.groundY + (gy - holder.groundY) * (if (found == null) 0.02 else if (calib == 2) 0.04 else 0.2)
                     }
-                    val sees = found != null || tNow - holder.startedAt < 4000
+                    val sees = found != null || terrain != null || tNow - holder.startedAt < 4000
                     if (seeGround != sees) seeGround = sees
                     if (calib == 0) {
                         val pr = (holder.ground.count(tNow) / 18f).coerceIn(0f, 1f).let { if (holder.tapped) 1f else it }
@@ -433,7 +495,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         dotsPx = holder.dots.mapNotNull { pjd.screen(it) }
                         val hr = if (calib != 0 || !floorFound) null else runCatching { frame.hitTest(viewW * 0.5f, viewH * 0.42f) }.getOrNull()?.firstOrNull { h ->
                             val y = h.hitPose.ty(); val t = h.trackable
-                            y < camPos.y - 0.6 && y > camPos.y - 2.4 && ((t is Plane && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) || (t is DepthPoint && h.hitPose.yAxis[1] > 0.7f))
+                            y < camPos.y - 0.6 && y > camPos.y - 2.4 && floorHit(h, 0.7f, false)
                         }
                         reticlePx = if (hr == null) emptyList() else {
                             // world radius chosen so the ring is about a third of the screen wide, near or far
@@ -464,7 +526,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             navState = n.state
                             // keep the drawing on your sidewalk, and let your own walking straighten the compass
                             holder.snap.update(align.toEnu(camPos), r.line, n.along, n.state.offset, if (settled) 0.04 else 0.15)
-                            if (!usedVps) holder.motion.update(camPos, n.along, n.state.offset, r.line)?.let { m -> align.headingSoft(m[0], m[1], m[2], 0.25); Log.i(TAG, "heading from walking: ${m[2].roundToInt()}°") }
+                            if (!usedVps) holder.motion.update(camPos, n.along, n.state.offset, r.line) { dx, dz -> (Math.toDegrees(align.arAngle(dx, dz) - align.yaw) + 360) % 360 }?.let { m -> align.headingSoft(m[0], m[1], m[2], 0.25); Log.i(TAG, "heading from walking: ${m[2].roundToInt()}°") }
                             val loc = sensors.location
                             if (!usedVps && loc != null && loc.hasBearing() && loc.speed > 0.9f && (android.os.Build.VERSION.SDK_INT < 26 || !loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees < 25f)) {
                                 val from = holder.courseFrom
@@ -511,7 +573,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             val pd = hypot(mid.x - camPos.x, mid.z - camPos.z)
                             val wall = runCatching { frame.hitTest(sp[0], sp[1]) }.getOrNull()?.firstOrNull()?.takeIf { hr ->
                                 val t = hr.trackable
-                                (t is DepthPoint && kotlin.math.abs(hr.hitPose.yAxis[1]) < 0.5f) || (t is Plane && t.type == Plane.Type.VERTICAL)
+                                (t is DepthPoint && kotlin.math.abs(hr.hitPose.yAxis[1]) < 0.5f) || (t is Plane && t.type == Plane.Type.VERTICAL) || (t is StreetscapeGeometry && t.type == StreetscapeGeometry.Type.BUILDING)
                             }
                             val wd = wall?.let { hypot(it.hitPose.tx() - camPos.x, it.hitPose.tz() - camPos.z) }
                             if (wd != null && wd < pd - 0.4) { holder.wallDist = wd; holder.wallAt = now }
@@ -522,7 +584,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             val hit = runCatching { frame.hitTest(foot[0], foot[1]) }.getOrNull()?.firstOrNull { hr ->
                                 val y = hr.hitPose.ty(); val t = hr.trackable
                                 y < camPos.y - 0.7 && y > camPos.y - 2.4 && hypot(hr.hitPose.tx() - pp.ground.x, hr.hitPose.tz() - pp.ground.z) < 2.5 &&
-                                    ((t is Plane && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING && t.isPoseInPolygon(hr.hitPose)) || t is DepthPoint)
+                                    (floorHit(hr) || t is DepthPoint)
                             }
                             if (hit != null) {
                                 val y = hit.hitPose.ty().toDouble()
@@ -617,7 +679,9 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         turnAround?.takeIf { !mapMode }?.let { deg -> TurnAround(w, deg, Modifier.align(Alignment.Center)) }
         // arrival: confetti and hearts around Poppy
         if (partyAt > 0 && !mapMode) Party(partyAt, o?.head)
-        if (mapMode) bigMap?.let { Image(it.asImageBitmap(), w.t("מפת המסלול", "Route map"), Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        // phone laid flat: the whole screen is the map (pinch, drag)
+        if (mapMode) RouteMap(w, api, route, navState?.along ?: 0.0, if (poppy.mode == PoppyGuide.Mode.LEAD || poppy.mode == PoppyGuide.Mode.PARTY) poppy.along else Double.NaN,
+            { here() }, { heading }, gender, Modifier.fillMaxSize().background(Color(0xFF0B1220)), startZoom = 16.0, bottomInset = with(density) { 96.dp.toPx() })
 
         // ---- top: the next manoeuvre ----
         val st = navState; val r = route
@@ -654,7 +718,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
 
         // ---- corner map ----
         if (!mapMode && !mapOpen && calib == 2) miniMap?.let { bm ->
-            Box(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 12.dp, bottom = 104.dp).size(88.dp).clip(CircleShape).border(3.dp, Color.White.copy(alpha = 0.85f), CircleShape)) {
+            Box(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 12.dp, bottom = 104.dp).size(88.dp).clip(CircleShape).border(3.dp, Color.White.copy(alpha = 0.85f), CircleShape).clickable { mapOpen = true }) {
                 Image(bm.asImageBitmap(), w.t("המפה סביבך", "Map around you"), Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 Canvas(Modifier.size(16.dp).align(Alignment.Center)) { drawPath(Path().apply { moveTo(size.width / 2, 0f); lineTo(size.width, size.height); lineTo(size.width / 2, size.height * 0.72f); lineTo(0f, size.height); close() }, Color(0xFFFF3B30)) }
             }
