@@ -169,10 +169,9 @@ fun WalkApp(smoke: Boolean = false, testDest: LatLng? = null, testFrom: LatLng? 
         var token by remember { mutableStateOf(BuildConfig.MAPBOX_TOKEN.ifEmpty { prefs.getString("mapbox", "") ?: "" }) }
         if (token.isEmpty()) { TokenScreen(w) { t -> prefs.edit().putString("mapbox", t).apply(); token = t }; return@CompositionLocalProvider }
         // the opening animation first (before the permission dialogs, so they don't cover it)
-        // 0 = the walking-in animation, 1 = boy or girl?, 2 = the app
-        var intro by remember { mutableStateOf(if (smoke || testDest != null) 2 else 0) }
-        if (intro == 0) { Splash(w) { intro = 1 }; return@CompositionLocalProvider }
-        if (intro == 1) { ChoosePoppy(w, prefs.getString("poppy", null)) { g -> prefs.edit().putString("poppy", g).apply(); intro = 2 }; return@CompositionLocalProvider }
+        // the opening animation, then the app (boy or girl is picked at the top of the main screen; boy by default)
+        var intro by remember { mutableStateOf(!(smoke || testDest != null)) }
+        if (intro) { Splash(w) { intro = false }; return@CompositionLocalProvider }
         val api = remember(token, lang) { MapboxApi(token, lang) }
         val sensors = remember { WalkSensors(context) }
         var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
@@ -181,7 +180,7 @@ fun WalkApp(smoke: Boolean = false, testDest: LatLng? = null, testFrom: LatLng? 
         DisposableEffect(granted) { if (granted) sensors.start(); onDispose { sensors.stop() } }
         var dest by remember { mutableStateOf(testDest?.let { Place("Test destination", "", it) }) }
         val d = dest
-        var poppy by remember { mutableStateOf(prefs.getString("poppy", "girl") ?: "girl") }
+        var poppy by remember { mutableStateOf(prefs.getString("poppy", "boy") ?: "boy") }
         if (d == null) SearchScreen(w, api, sensors, poppy, { poppy = it; prefs.edit().putString("poppy", it).apply() }, { lang = it; prefs.edit().putString("lang", it).apply() }) { dest = it }
         else NavScreen(w, api, sensors, d, smoke, testFrom, poppy) { dest = null }
     }

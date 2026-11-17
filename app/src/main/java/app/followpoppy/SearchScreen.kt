@@ -219,7 +219,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
                 }
                 Spacer(Modifier.width(8.dp))
                 Row(Modifier.glass(CircleShape, 0.8f).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    for ((k, label, c) in listOf(Triple("girl", w.t("בת", "Girl"), PoppyPink), Triple("boy", w.t("בן", "Boy"), PoppyBlue))) {
+                    for ((k, label, c) in listOf(Triple("boy", w.t("בן", "Boy"), PoppyBlue), Triple("girl", w.t("בת", "Girl"), PoppyPink))) {
                         val on = poppy == k
                         Row(Modifier.clip(CircleShape).background(if (on) Color.White.copy(alpha = 0.16f) else Color.Transparent).clickable { onPoppy(k) }.padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                             Canvas(Modifier.size(22.dp)) { miniPoppyIcon(c, if (on) 1f else 0.45f) }
