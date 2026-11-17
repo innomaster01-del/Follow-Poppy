@@ -11,11 +11,14 @@ echo "ARCore: $URL" > smoke/summary.txt
 curl -fsSL -o /tmp/arcore.apk "$URL" && adb install -r /tmp/arcore.apk >> smoke/summary.txt 2>&1
 adb install -r -g app-debug.apk >> smoke/summary.txt 2>&1
 
-echo "--- opening (splash, then boy or girl) ---" >> smoke/summary.txt
+echo "--- opening (splash, then the main screen) ---" >> smoke/summary.txt
 timeout 20 adb logcat -c
 timeout 30 adb shell am start -n app.followpoppy/.MainActivity
-sleep 1.5; timeout 25 adb exec-out screencap -p > smoke/1_splash.png
-sleep 4; timeout 25 adb exec-out screencap -p > smoke/2_choose.png
+sleep 1.0; timeout 25 adb exec-out screencap -p > smoke/1a_splash.png
+sleep 0.6; timeout 25 adb exec-out screencap -p > smoke/1b_splash.png
+sleep 0.6; timeout 25 adb exec-out screencap -p > smoke/1c_splash.png
+sleep 0.6; timeout 25 adb exec-out screencap -p > smoke/1d_splash.png
+sleep 4; timeout 25 adb exec-out screencap -p > smoke/2_main.png
 log smoke/open_log.txt
 if gone; then echo "CRASHED on opening" >> smoke/summary.txt; else echo "opening ok" >> smoke/summary.txt; fi
 grep -E "FATAL|Exception|Abort|signal" smoke/open_log.txt | head -20 >> smoke/summary.txt

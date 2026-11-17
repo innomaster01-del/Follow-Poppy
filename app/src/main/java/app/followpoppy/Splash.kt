@@ -70,9 +70,9 @@ private fun Context.png(name: String): ImageBitmap? =
     runCatching { assets.open(name).use { BitmapFactory.decodeStream(it) }?.asImageBitmap() }.getOrNull()
 
 /**
- * The opening: on the night background, Poppy's paw prints walk up the screen (pink and blue, left and right, each one
- * popping in, the older ones fading behind) and lead into the ring the logo stands on; the logo pops up dim and lights
- * up (it brightens, its glow swells, a shine runs across it), then the name rises. About 3.3 s; a tap skips it.
+ * The opening: only the steps and the logo. On the night background Poppy's paw prints walk up the screen (pink and
+ * blue, left and right, each one popping in, the older ones fading behind) to the ring the logo stands on; the logo
+ * fades in and grows a little out of it, and a soft glow behind it breathes once. About 3 s; a tap skips it.
  */
 @Composable
 internal fun Splash(w: Words, onDone: () -> Unit) {
@@ -84,7 +84,6 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
     val steps = remember { List(STEPS) { Animatable(0f) } }
     val logoIn = remember { Animatable(0f) }
     val light = remember { Animatable(0f) }
-    val title = remember { Animatable(0f) }
     val out = remember { Animatable(1f) }
     var started by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(false) }
@@ -96,11 +95,10 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
             launch { glow.animateTo(1f, tween(1000, easing = FastOutSlowInEasing)) }
             steps.forEachIndexed { i, a -> launch { delay(150L + i * 125L); a.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium)) } }
             val after = 150L + STEPS * 125L
-            launch { delay(after); logoIn.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow)) }
-            launch { delay(after + 380); light.animateTo(1f, tween(800, easing = FastOutSlowInEasing)) }
-            launch { delay(after + 520); title.animateTo(1f, tween(600, easing = FastOutSlowInEasing)) }
+            launch { delay(after - 100); logoIn.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+            launch { delay(after + 250); light.animateTo(1f, tween(1100, easing = FastOutSlowInEasing)) }
         }
-        delay(500)
+        delay(250)
         out.animateTo(0f, tween(300, easing = LinearEasing))
         finish()
     }
@@ -114,7 +112,7 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
             val lw = minOf(wpx * 0.72f, 300f * dens)                              // the logo's box (px)
             val lg = logo
             val lh = if (lg != null) lw * lg.height / lg.width else lw
-            val lx = (wpx - lw) / 2; val ly = hpx * 0.40f - lh / 2
+            val lx = (wpx - lw) / 2; val ly = hpx * 0.43f - lh / 2
             // the logo's ring (its foot) in its picture: where the steps arrive
             val ring = Offset(lx + lw * 0.37f, ly + lh * 0.93f)
             Canvas(Modifier.fillMaxSize()) {
@@ -141,37 +139,19 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
                     paw(c, ang, sz, (if (i % 2 == 0) Pink else Blue).copy(alpha = (v.coerceIn(0f, 1f) * fade)))
                 }
             }
-            // the logo: pops up dim, then lights up (brightens, its glow swells, a shine runs across it)
+            // the logo: fades in and grows a little out of where the steps end; a soft glow behind it breathes once
             if (lg != null) {
-                val l = light.value
-                Box(Modifier.offset { androidx.compose.ui.unit.IntOffset(lx.toInt(), ly.toInt()) }.size((lw / dens).dp, (lh / dens).dp).graphicsLayer {
-                    val k = logoIn.value; scaleX = 0.25f + 0.75f * k; scaleY = 0.25f + 0.75f * k; alpha = k.coerceIn(0f, 1f)
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.37f, 0.93f)   // grows out of the ring the steps lead to
-                }, contentAlignment = Alignment.Center) {
-                    Canvas(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.4f; scaleY = 1.4f }) {
-                        val g = kotlin.math.sin(l * Math.PI).toFloat() * 0.5f + l * 0.25f
-                        drawCircle(Brush.radialGradient(listOf(Blue.copy(alpha = 0.4f * g), Pink.copy(alpha = 0.16f * g), Color.Transparent)), size.minDimension / 2)
+                val k = logoIn.value; val l = light.value
+                Box(Modifier.offset { androidx.compose.ui.unit.IntOffset(lx.toInt(), ly.toInt()) }.size((lw / dens).dp, (lh / dens).dp), contentAlignment = Alignment.Center) {
+                    Canvas(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.3f; scaleY = 1.3f; alpha = k }) {
+                        val g = 0.35f + 0.65f * kotlin.math.sin(l * Math.PI).toFloat()
+                        drawCircle(Brush.radialGradient(listOf(Blue.copy(alpha = 0.22f * g), Pink.copy(alpha = 0.10f * g), Color.Transparent)), size.minDimension / 2)
                     }
-                    val b = 0.4f + 0.6f * l
-                    Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
-                        Image(lg, null, Modifier.fillMaxSize(), colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
-                            androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, 1f, 0f))))
-                        Canvas(Modifier.fillMaxSize()) {
-                            if (l > 0f && l < 1f) {
-                                val x = -size.width * 0.5f + size.width * 2f * l
-                                drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.6f), Color.Transparent),
-                                    Offset(x - size.width * 0.18f, 0f), Offset(x + size.width * 0.18f, size.height * 0.5f)), blendMode = androidx.compose.ui.graphics.BlendMode.SrcAtop)
-                            }
-                        }
-                    }
+                    Image(lg, null, Modifier.fillMaxSize().graphicsLayer {
+                        alpha = k; val sc = 0.9f + 0.1f * k; scaleX = sc; scaleY = sc
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.37f, 0.93f)
+                    }, filterQuality = androidx.compose.ui.graphics.FilterQuality.High)
                 }
-            }
-            Column(Modifier.offset { androidx.compose.ui.unit.IntOffset(0, (ly + lh + 18 * dens).toInt()) }.fillMaxWidth()
-                .graphicsLayer { alpha = title.value; translationY = (1 - title.value) * 14.dp.toPx() },
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Follow Poppy", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
-                Spacer(Modifier.height(6.dp))
-                Text(w.t("פופי תוביל אותך לשם", "Poppy will lead the way"), color = Color.White.copy(alpha = 0.62f), fontSize = 16.sp)
             }
         }
     }
