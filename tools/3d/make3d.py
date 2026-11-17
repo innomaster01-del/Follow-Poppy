@@ -52,7 +52,7 @@ for space in SPACES:
                 if pn in ('image', 'img', 'input_image'): kw[pn] = img
                 elif pn == 'caption': kw[pn] = None
                 elif pn.startswith('mv_image'): kw[pn] = None
-                elif pn == 'steps': kw[pn] = 50
+                elif pn == 'steps': kw[pn] = 30                 # the demo's default (a free account's daily GPU time is short)
                 elif pn == 'octree_resolution': kw[pn] = 256
                 elif pn == 'check_box_rembg': kw[pn] = True
                 elif pn == 'randomize_seed': kw[pn] = False
