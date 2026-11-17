@@ -300,3 +300,17 @@ class RibbonShapeTest {
         assertTrue((px[w / 2] ushr 24) < 10 && (px[(h - 1) * w + w / 2] ushr 24) < 10)  // both ends see-through
     }
 }
+
+class MoneyTest {
+    @Test fun currenciesThatMatterWhereYouAre() {
+        assertEquals(listOf("ILS" to "THB", "USD" to "THB"), Money.pairs("ILS", "THB"))     // abroad: yours and dollars into baht
+        assertEquals(listOf("USD" to "ILS", "EUR" to "ILS"), Money.pairs("ILS", "ILS"))     // at home: dollars and euros
+        assertEquals(listOf("USD" to "ILS", "EUR" to "ILS"), Money.pairs("ILS", null))
+        assertEquals(listOf("USD" to "THB"), Money.pairs("USD", "THB"))                      // no pair twice
+    }
+    @Test fun whereToSeeAChangersRate() {
+        assertTrue(Money.ratesPage(Place("SuperRich Thailand", "Ratchadamri", LatLng(13.75, 100.54))).startsWith("https://www.superrichthailand.com"))
+        val other = Money.ratesPage(Place("Vasu Exchange", "Sukhumvit", LatLng(13.74, 100.55)))
+        assertTrue(other.startsWith("https://www.google.com/search?q=") && "Vasu" in other)
+    }
+}

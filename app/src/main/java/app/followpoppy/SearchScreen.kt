@@ -128,6 +128,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val logo by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null) {
         value = withContext(Dispatchers.IO) { runCatching { ctx.assets.open("splash_logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }?.asImageBitmap() }.getOrNull() }
     }
@@ -275,6 +276,8 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
             Spacer(Modifier.height(18.dp))
             kind?.let { k -> Text(w.t("קרוב אליך", "Near you") + " · " + w.t(k.he, k.en), color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
             error?.let { Text(it, color = Warm, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
+            // changing money: today's market rate to compare with the changer's board, and a quick converter
+            if (kind?.id == "exchange") here?.let { RatesCard(w, it) }
             // nothing typed and no kind chosen: what is around you; typing or a search replaces it with the results
             val browsing = q.isBlank() && kind == null
             if (browsing) {
@@ -298,6 +301,12 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
                                     Text(p.name, color = Text1, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val sub = listOf(p.alt, p.address).filter { it.isNotEmpty() }.joinToString(" · ")
                                     if (sub.isNotEmpty()) Text(sub, color = Text3, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                // a money changer: where to see the rate it gives (its own site, or a search for it)
+                                if (kind?.id == "exchange") {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(w.t("השער שלהם", "Their rate"), color = Night, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.clip(CircleShape).background(Text1).clickable { runCatching { uri.openUri(Money.ratesPage(p)) } }.padding(horizontal = 10.dp, vertical = 6.dp))
                                 }
                                 dist?.let {
                                     Spacer(Modifier.width(10.dp))
@@ -357,5 +366,58 @@ private fun PlaceTileLoading() {
         Box(Modifier.fillMaxWidth(0.8f).height(12.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f * a)))
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth(0.5f).height(10.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f * a)))
+    }
+}
+
+/**
+ * Today's market rate where you are (the currencies that matter here: abroad yours and dollars into the local one, at
+ * home dollars and euros into yours), what a fair changer should give, and a converter for the first pair.
+ */
+@Composable
+private fun RatesCard(w: Words, here: LatLng) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // fetched once per area (rounded position) - not on every small move
+    val key = "${"%.1f".format(java.util.Locale.US, here.lat)},${"%.1f".format(java.util.Locale.US, here.lng)}"
+    val data by produceState<Pair<List<Triple<String, String, Double>>, Boolean>?>(null, key) {
+        value = withContext(Dispatchers.IO) {
+            val home = Money.homeCurrency(); val local = Money.localCurrency(ctx, here)
+            val pairs = Money.pairs(home, local)
+            val got = pairs.groupBy { it.first }.flatMap { (from, ps) ->
+                val r = Money.rates(from, ps.map { it.second }.toSet()); ps.mapNotNull { (f, t) -> r[t]?.let { Triple(f, t, it) } }
+            }
+            got to (got.isEmpty())
+        }
+    }
+    var amount by remember { mutableStateOf("100") }
+    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp).glass(RoundedCornerShape(22.dp), 0.9f).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(w.t("שער השוק היום", "Today's market rate"), color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        val d = data
+        when {
+            d == null -> Text(w.t("בודק שערים…", "Checking rates…"), color = Text3, fontSize = 14.sp)
+            d.second -> Text(w.t("אין חיבור לשערים כרגע", "Rates are not available right now"), color = Text3, fontSize = 14.sp)
+            else -> {
+                fun num(x: Double) = if (x >= 100) "%,.0f".format(java.util.Locale.US, x) else if (x >= 10) "%.2f".format(java.util.Locale.US, x) else "%.3f".format(java.util.Locale.US, x)
+                for ((f, t, r) in d.first) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("1 ${Money.sign(f)} = ${num(r)} ${Money.sign(t)}", color = Text1, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
+                            style = androidx.compose.ui.text.TextStyle(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+                        // a fair changer gives at least ~98% of the market rate; under ~96% is expensive
+                        Text(w.t("טוב: ${num(r * 0.98)}+", "Good: ${num(r * 0.98)}+"), color = Color(0xFF4ADE80), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                val (f, t, r) = d.first.first()
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    androidx.compose.foundation.text.BasicTextField(amount, { v -> amount = v.filter { it.isDigit() || it == '.' }.take(9) },
+                        singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Text1),
+                        modifier = Modifier.width(110.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.08f)).padding(horizontal = 12.dp, vertical = 8.dp))
+                    Text("${Money.sign(f)}  →  ${amount.toDoubleOrNull()?.let { num(it * r) } ?: "—"} ${Money.sign(t)}", color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                        style = androidx.compose.ui.text.TextStyle(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+                }
+                Text(w.t("השווה לשער על הלוח של הצ'יינג'. \"השער שלהם\" ליד כל מקום מראה את השער שהוא מפרסם.", "Compare with the changer's board. \"Their rate\" next to each place shows the rate it publishes."),
+                    color = Text3, fontSize = 12.sp)
+            }
+        }
     }
 }
