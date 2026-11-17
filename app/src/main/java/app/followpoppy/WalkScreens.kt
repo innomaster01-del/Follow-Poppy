@@ -393,7 +393,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     val settled = calib == 2 && align.ready
                     fun per(tau: Double) = 1 - kotlin.math.exp(-adt / tau)
                     val earth = runCatching { session.earth }.getOrNull()
-                    if (origin != null && earth != null && earth.trackingState == TrackingState.TRACKING) {
+                    // (a test walk from a fixed start ignores the emulator's own made-up location and Earth pose)
+                    if (origin != null && testFrom == null && earth != null && earth.trackingState == TrackingState.TRACKING) {
                         val gp = earth.cameraGeospatialPose
                         // camera forward in east-up-south from the pose quaternion → true heading
                         val q = gp.eastUpSouthQuaternion; val qx = q[0].toDouble(); val qy = q[1].toDouble(); val qz = q[2].toDouble(); val qw = q[3].toDouble()
@@ -425,7 +426,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             else align.headingSoft(fx, fz, h, per(45.0))
                         }
                         val l = sensors.location
-                        if (l != null && l.time != holder.lastFix) {
+                        if (l != null && testFrom == null && l.time != holder.lastFix) {
                             holder.lastFix = l.time
                             // compared with where the phone was when the fix was measured, and once walking only a slow
                             // drift correction: GPS must never pull you back while ARCore sees you walking forward
