@@ -423,7 +423,11 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                                 val nowAt = if (align.ready) align.toEnu(camPos).let { c -> align.toEnu(then).let { p -> Enu(at.e + c.e - p.e, at.n + c.n - p.n) } } else at
                                 if (!settled) align.position(camPos, nowAt, g) else align.positionSoft(camPos, nowAt, g)
                             }
-                        } else if (testFrom != null && !align.ready) align.position(camPos, Geo.toEnu(origin, testFrom), 1.0)
+                        } else if (testFrom != null && !align.ready) {
+                            // emulator test: no compass there, so take north as the camera's start direction
+                            if (smoke && align.headingFixes == 0) align.heading(fx, fz, 0.0, 1.0)
+                            align.position(camPos, Geo.toEnu(origin, testFrom), 1.0)
+                        }
                     }
                     // buildings from Google's street model, drawn invisibly so Poppy and the trail hide behind them;
                     // only while VPS has placed you precisely (a misplaced building would hide her for nothing)
@@ -735,8 +739,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         // ---- bottom: time, distance, controls ----
         Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp).darkGlass(RoundedCornerShape(26.dp)).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(st?.let { w.mins(it.etaSec) } ?: "—", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-                Text(st?.let { "${w.dist(it.remaining)} · ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(System.currentTimeMillis() + (it.etaSec * 1000).toLong()))}" + if (vps) " · VPS" else "" } ?: dest.name, color = Muted, fontSize = 13.sp)
+                Text(st?.let { w.mins(it.etaSec) } ?: "—", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
+                Text(st?.let { "${w.dist(it.remaining)} · ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(System.currentTimeMillis() + (it.etaSec * 1000).toLong()))}" + if (vps) " · VPS" else "" } ?: dest.name, color = Muted, fontSize = 13.sp, maxLines = 1, softWrap = false)
             }
             Row(Modifier.clip(RoundedCornerShape(12.dp)).background(if (mapOpen) Cyan else Card).clickable { mapOpen = !mapOpen }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Canvas(Modifier.size(16.dp)) {                                     // a folded map

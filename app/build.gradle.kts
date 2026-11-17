@@ -11,8 +11,8 @@ android {
         applicationId = "app.followpoppy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
         // Mapbox public token (walking routes, search, map images) and an optional Google Cloud key with the ARCore API
         // (Street View VPS for metre-level accuracy): both from the repo secrets, never in the source
         buildConfigField("String", "MAPBOX_TOKEN", "\"${System.getenv("MAPBOX_TOKEN") ?: ""}\"")
@@ -47,6 +47,8 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.13.0")
+    // ARCore Geospatial (Street View VPS, terrain, the street model) needs the Fused Location Provider in the app
+    implementation("com.google.android.gms:play-services-location:21.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // the real org.json for JVM tests (android.jar only has stubs)
 }
