@@ -35,7 +35,7 @@ def save(res, name, tag):
 
 for space in SPACES:
     try:
-        c = Client(space, hf_token=token)
+        c = Client(space, token=token) if token else Client(space)
         api = c.view_api(return_format='dict', print_info=False)
         say('==', space, 'endpoints:', list(api['named_endpoints'].keys()))
         for k, v in api['named_endpoints'].items():
