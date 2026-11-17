@@ -3,8 +3,12 @@
 Everything in `app/src/main/assets/models` is made by these scripts with three.js r128 (the copy inside the Pufi desktop
 pet; any `three.min.js` r128 works):
 
-    node export_poppy.js three.min.js poppy_build.js girl ../../../app/src/main/assets/models/poppy_girl.glb
-    node export_poppy.js three.min.js poppy_build.js boy  ../../../app/src/main/assets/models/poppy_boy.glb
+    node bunny.js three.min.js girl ../../../app/src/main/assets/models/poppy_girl.glb
+    node bunny.js three.min.js boy  ../../../app/src/main/assets/models/poppy_boy.glb
+
+`bunny.js` is Poppy's look now: a chibi bunny in a hoodie (girl: pink hoodie and pink inside the ears, lashes;
+boy: blue). The outside and rim of the ears are white like the body; only the inside of the ear is coloured.
+`export_poppy.js` (below) made the earlier look from the desktop pet's code.
     node make_trail.js   three.min.js ../../../app/src/main/assets/models     # ribbon, chevron, paw prints, shadow
     python3 render_glb.py ../../../app/src/main/assets/models/poppy_girl.glb preview.png   # quick look without a GPU
 
