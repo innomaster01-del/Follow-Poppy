@@ -203,11 +203,9 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
             Spacer(Modifier.height(18.dp))
             // header: wordmark, and who walks with you (a small segmented glass control with both Poppys)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // our logo, small, with the name
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    logo?.let { Image(it, "Follow Poppy", Modifier.height(40.dp).aspectRatio(it.width.toFloat() / it.height)) }
-                    Spacer(Modifier.width(6.dp))
-                    Text("Follow Poppy", color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
+                // our logo, small (the name is in it; no text that could get squeezed on a narrow screen)
+                Box(Modifier.weight(1f)) {
+                    logo?.let { Image(it, "Follow Poppy", Modifier.height(44.dp).aspectRatio(it.width.toFloat() / it.height)) }
                 }
                 // language: עב / EN
                 Row(Modifier.glass(CircleShape, 0.8f).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
