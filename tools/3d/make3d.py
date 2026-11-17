@@ -11,7 +11,12 @@ log = open(os.path.join(out, 'log.txt'), 'w')
 def say(*a):
     print(*a, flush=True); print(*a, file=log, flush=True)
 
-SPACES = ['tencent/Hunyuan3D-2', 'tencent/Hunyuan3D-2.1', 'tencent/Hunyuan3D-2mini-Turbo']
+# (space, endpoint, textured?) in order. Hunyuan3D-2's demo has its texturing switched off ("texgen_worker is not
+# defined"), so it is only used for the shape; 2.1 makes the textured model but needs ~270 s of GPU each.
+# A free account gets only a few minutes a day, so the shape comes first for both (the colours are then painted on
+# from the same picture by paint_from_picture.py); the textured 2.1 model is the fallback.
+PLAN = [('tencent/Hunyuan3D-2', '/shape_generation', False), ('tencent/Hunyuan3D-2.1', '/shape_generation', False),
+        ('tencent/Hunyuan3D-2.1', '/generation_all', True)]
 names = [n for n in ('girl', 'boy') if os.path.exists(os.path.join(src, f'poppy_{n}_front.png'))]
 token = os.environ.get('HF_TOKEN') or None
 
@@ -33,39 +38,32 @@ def save(res, name, tag):
     say('  files:', files, '-> kept', kept)
     return kept
 
-for space in SPACES:
-    try:
-        c = Client(space, token=token) if token else Client(space)
-        api = c.view_api(return_format='dict', print_info=False)
-        say('==', space, 'endpoints:', list(api['named_endpoints'].keys()))
-        for k, v in api['named_endpoints'].items():
-            say('  ', k, json.dumps([(p.get('parameter_name'), p.get('parameter_has_default'), p.get('parameter_default')) for p in v.get('parameters', [])])[:900])
-        ep = next((k for k in api['named_endpoints'] if 'generation_all' in k), None) or next((k for k in api['named_endpoints'] if 'gen' in k.lower()), None)
-        if not ep: continue
-        params = api['named_endpoints'][ep]['parameters']
-        done = 0
-        for n in names:
+clients = {}
+def client(space):
+    if space not in clients: clients[space] = Client(space, token=token) if token else Client(space)
+    return clients[space]
+
+for n in names:
+    for space, ep, textured in PLAN:
+        if any(f.startswith(n + '_') for f in os.listdir(out)): break        # this one is done
+        try:
+            c = client(space)
+            params = c.view_api(return_format='dict', print_info=False)['named_endpoints'][ep]['parameters']
             img = handle_file(os.path.join(src, f'poppy_{n}_front.png'))
             kw = {}
             for p in params:
                 pn = p.get('parameter_name') or ''
-                if pn in ('image', 'img', 'input_image'): kw[pn] = img
-                elif pn == 'caption': kw[pn] = None
-                elif pn.startswith('mv_image'): kw[pn] = None
-                elif pn == 'steps': kw[pn] = 30                 # the demo's default (a free account's daily GPU time is short)
+                if pn == 'image': kw[pn] = img
+                elif pn == 'caption' or pn.startswith('mv_image'): kw[pn] = None
+                elif pn == 'steps': kw[pn] = 30
                 elif pn == 'octree_resolution': kw[pn] = 256
                 elif pn == 'check_box_rembg': kw[pn] = True
                 elif pn == 'randomize_seed': kw[pn] = False
                 elif pn == 'seed': kw[pn] = 1234
-                elif not p.get('parameter_has_default'): kw[pn] = None
-            say(' ', n, 'calling', ep, {k: ('<image>' if k in ('image', 'img', 'input_image') else v) for k, v in kw.items()})
-            try:
-                res = c.predict(api_name=ep, **kw)
-                say('  result:', str(res)[:600])
-                if save(res, n, space.split('/')[-1]): done += 1
-            except Exception as e:
-                say('  failed:', repr(e)[:800])
-        if done == len(names): say('all done with', space); break
-    except Exception as e:
-        say('==', space, 'unavailable:', repr(e)[:600]); traceback.print_exc()
+            say(n, space, ep, 'textured' if textured else 'shape only')
+            res = c.predict(api_name=ep, **kw)
+            say('  result:', str(res)[:400])
+            save(res, n, ('tex' if textured else 'shape'))
+        except Exception as e:
+            say('  failed:', repr(e)[:500])
 log.close()
