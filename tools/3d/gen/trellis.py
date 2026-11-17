@@ -29,3 +29,25 @@ except Exception:
             say("ok", alt, list(a.get("named_endpoints", {}).keys()))
         except Exception as e:
             say("fail", alt, repr(e)[:300])
+
+# ---- generate each picture: a session, the Space's own background removal, the 3D, then the GLB ----
+def run(path):
+    name = os.path.splitext(os.path.basename(path))[0]
+    c = Client(space, token=token)
+    try: c.predict(api_name="/start_session")
+    except Exception as e: say("start_session:", repr(e)[:200])
+    pre = c.predict(handle_file(path), api_name="/preprocess_image")
+    say(name, "preprocessed", str(pre)[:200])
+    shutil.copy(pre if isinstance(pre, str) else pre.get("path"), os.path.join(out, name + "_pre.png"))
+    img = handle_file(pre if isinstance(pre, str) else pre.get("path"))
+    prev = c.predict(img, 0, "1024", 7.5, 0.7, 12, 5.0, 7.5, 0.5, 12, 3.0, 1.0, 0.0, 12, 3.0, api_name="/image_to_3d")
+    say(name, "3d done", str(prev)[:200])
+    res = c.predict(60000, 1024, api_name="/extract_glb")
+    glb = res[1] if isinstance(res, (list, tuple)) else res
+    if isinstance(glb, dict): glb = glb.get("path") or glb.get("value")
+    shutil.copy(glb, os.path.join(out, name + ".glb"))
+    say(name, "glb", os.path.getsize(os.path.join(out, name + ".glb")), "bytes")
+
+for p in sorted(glob.glob(os.path.join(src, "*.png")) + glob.glob(os.path.join(src, "*.jpg"))):
+    try: run(p)
+    except Exception: say(os.path.basename(p), traceback.format_exc()[-1500:])
