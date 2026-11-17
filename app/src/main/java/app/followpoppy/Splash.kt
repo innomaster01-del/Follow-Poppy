@@ -153,20 +153,25 @@ internal fun Splash(w: Words, onDone: () -> Unit) {
         }
         // the logo, above the two of them
         art?.logo?.let { logo ->
-            Box(Modifier.align(Alignment.TopCenter).padding(top = 96.dp).size(132.dp).graphicsLayer {
+            // pops up dim, then lights up: brightens to full, its glow swells, and a shine runs across it
+            val l = light.value
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 64.dp).width(250.dp).aspectRatio(logo.width.toFloat() / logo.height).graphicsLayer {
                 val k = logoIn.value; scaleX = 0.2f + 0.8f * k; scaleY = 0.2f + 0.8f * k; alpha = k.coerceIn(0f, 1f); translationY = (1 - k) * 40.dp.toPx()
             }, contentAlignment = Alignment.Center) {
-                val l = light.value
-                Canvas(Modifier.size(132.dp).graphicsLayer { scaleX = 2.2f; scaleY = 2.2f }) {   // the glow as it lights up
-                    val g = kotlin.math.sin(l * Math.PI).toFloat() * 0.55f + l * 0.35f
-                    drawCircle(Brush.radialGradient(listOf(Pink.copy(alpha = 0.55f * g), Blue.copy(alpha = 0.25f * g), Color.Transparent)), size.minDimension / 2)
+                Canvas(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.5f; scaleY = 1.5f }) {
+                    val g = kotlin.math.sin(l * Math.PI).toFloat() * 0.5f + l * 0.3f
+                    drawCircle(Brush.radialGradient(listOf(Blue.copy(alpha = 0.45f * g), Pink.copy(alpha = 0.2f * g), Color.Transparent)), size.minDimension / 2)
                 }
-                Image(logo, null, Modifier.size(132.dp).clip(RoundedCornerShape(30.dp)))
-                Canvas(Modifier.size(132.dp).clip(RoundedCornerShape(30.dp))) {           // a shine sweeping across
-                    if (l > 0f && l < 1f) {
-                        val x = -size.width * 0.6f + size.width * 2.2f * l
-                        drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.55f), Color.Transparent),
-                            Offset(x - size.width * 0.25f, 0f), Offset(x + size.width * 0.25f, size.height * 0.4f)))
+                val b = 0.42f + 0.58f * l
+                Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
+                    Image(logo, null, Modifier.fillMaxSize(), colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                        androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, 1f, 0f))))
+                    Canvas(Modifier.fillMaxSize()) {                                   // the shine, only where the logo is
+                        if (l > 0f && l < 1f) {
+                            val x = -size.width * 0.5f + size.width * 2f * l
+                            drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.6f), Color.Transparent),
+                                Offset(x - size.width * 0.18f, 0f), Offset(x + size.width * 0.18f, size.height * 0.5f)), blendMode = androidx.compose.ui.graphics.BlendMode.SrcAtop)
+                        }
                     }
                 }
             }

@@ -70,6 +70,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -120,6 +124,10 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
     var results by remember { mutableStateOf<List<Place>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val logo by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null) {
+        value = withContext(Dispatchers.IO) { runCatching { ctx.assets.open("splash_logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }?.asImageBitmap() }.getOrNull() }
+    }
     var here by remember { mutableStateOf<LatLng?>(null) }
     var acc by remember { mutableStateOf<Int?>(null) }
     var far by remember { mutableStateOf<Place?>(null) }
@@ -180,7 +188,12 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
             Spacer(Modifier.height(18.dp))
             // header: wordmark, and who walks with you (a small segmented glass control with both Poppys)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Follow Poppy", color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp, modifier = Modifier.weight(1f))
+                // our logo, small, with the name
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    logo?.let { Image(it, "Follow Poppy", Modifier.height(40.dp).aspectRatio(it.width.toFloat() / it.height)) }
+                    Spacer(Modifier.width(6.dp))
+                    Text("Follow Poppy", color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
+                }
                 // language: עב / EN
                 Row(Modifier.glass(CircleShape, 0.8f).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     for ((k, label) in listOf("he" to "עב", "en" to "EN")) {
