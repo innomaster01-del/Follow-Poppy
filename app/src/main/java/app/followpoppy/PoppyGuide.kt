@@ -227,7 +227,7 @@ class PoppyGuide {
         const val SIT_AT = 18.0; const val YAWN_AT = 40.0; const val SLEEP_AT = 46.0
         const val CLIP = 0.56          // the walk clip in poppy_*.glb
         const val SCALE = 0.6f         // about 80 cm tall with the ears
-        const val HEIGHT = 1.45 * SCALE
+        const val HEIGHT = 1.35 * SCALE
 
         /** Manoeuvres of a route as turns for Poppy (start and arrival left out). */
         fun turnsOf(route: Route): List<Turn> = route.steps.filter { it.type != "depart" && it.type != "arrive" }.map {
