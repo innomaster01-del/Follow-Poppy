@@ -1,6 +1,8 @@
 name: Build APK
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+    paths-ignore: ['tools/3d/source/**', 'tools/3d/make3d.py', '.github/workflows/make3d.yml']
   workflow_dispatch:
 permissions: { contents: write }
 jobs:
