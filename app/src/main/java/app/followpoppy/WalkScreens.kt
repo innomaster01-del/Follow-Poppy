@@ -30,6 +30,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -729,11 +731,12 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         }
 
         // ---- the map that slides up with a tap ----
-        AnimatedVisibility(mapOpen && !mapMode, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp),
+        AnimatedVisibility(mapOpen && !mapMode, modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(tween(180)),
             exit = slideOutVertically(tween(260)) { it } + fadeOut(tween(200))) {
             MapSheet(w, api, route, navState?.along ?: 0.0, if (poppy.mode == PoppyGuide.Mode.LEAD || poppy.mode == PoppyGuide.Mode.PARTY) poppy.along else Double.NaN,
-                { here() }, { heading }, gender, navState?.let { "${w.dist(it.remaining)} · ${w.mins(it.etaSec)}" } ?: dest.name) { mapOpen = false }
+                { here() }, { heading }, gender, navState?.let { "${w.dist(it.remaining)} · ${w.mins(it.etaSec)}" } ?: dest.name,
+                bottomInset = with(density) { 110.dp.toPx() } + WindowInsets.navigationBars.getBottom(density).toFloat()) { mapOpen = false }
         }
 
         // ---- bottom: time, distance, controls ----

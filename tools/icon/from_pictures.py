@@ -26,6 +26,17 @@ subprocess.run([sys.executable, os.path.join(here, 'install_icon.py'), os.path.j
 im = np.asarray(Image.open(os.path.join(here, 'source/logo_on_black.png')).convert('RGB')).astype(np.float32) / 255
 a = np.clip((im.max(axis=2) - 0.03) / 0.97, 0, 1)
 rgb = np.where(a[..., None] > 1e-3, np.clip(im / np.maximum(a[..., None], 1e-3), 0, 1), 0)
+# the white haze around the pin: grey (no colour) and not bright. Keep the pin itself (bright) and the coloured neon
+# glows (route, ears, destination pin), let only a faint trace of the grey haze remain
+v = im.max(axis=2); sat = (v - im.min(axis=2)) / np.maximum(v, 1e-3)
+keep = np.maximum(np.clip((sat - 0.12) / 0.3, 0, 1), np.clip((v - 0.86) / 0.08, 0, 1))
+# …but everything inside the pin's outline stays as it is (the grey paw pressed into it, its soft shading)
+solid = (v > 0.8).astype(np.uint8) * 255
+solid = cv2.morphologyEx(solid, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
+holes = solid.copy(); cv2.floodFill(holes, np.zeros((solid.shape[0] + 2, solid.shape[1] + 2), np.uint8), (0, 0), 255)
+inside = cv2.GaussianBlur(((solid > 0) | (holes == 0)).astype(np.float32), (0, 0), 3)
+keep = np.maximum(keep, inside)
+a = a * (0.12 + 0.88 * keep)
 H, W = a.shape; yy, xx = np.mgrid[0:H, 0:W]
 a = a * np.clip(np.minimum.reduce([xx / W, (W - 1 - xx) / W, yy / H, (H - 1 - yy) / H]) / 0.14, 0, 1) ** 1.6
 out = Image.fromarray((np.dstack([rgb, a]) * 255).astype(np.uint8), 'RGBA')

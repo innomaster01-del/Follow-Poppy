@@ -2,7 +2,6 @@ package app.followpoppy
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.SystemClock
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -27,53 +26,65 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.net.URL
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sinh
 import kotlin.math.tan
 
 /**
  * Where a map point lands on a Mapbox static image: Web Mercator (512 px tiles) around [center] at [zoom], the map turned
  * so that [bearing] (degrees, clockwise from north) points up. Returns logical pixels from the image's top-left.
+ * (Used by the small corner map's image.)
  */
 internal object StaticMapProjection {
     private fun size(zoom: Double) = 512.0 * Math.pow(2.0, zoom)
@@ -86,146 +97,175 @@ internal object StaticMapProjection {
         val dx = a[0] - c[0]; val dy = a[1] - c[1]; val b = Math.toRadians(bearing)
         return doubleArrayOf(w / 2 + dx * cos(b) + dy * sin(b), h / 2 - dx * sin(b) + dy * cos(b))
     }
-    /** The map point at image pixel ([x], [y]): the inverse of [project]. */
-    fun unproject(x: Double, y: Double, center: LatLng, zoom: Double, bearing: Double, w: Double, h: Double): LatLng {
-        val b = Math.toRadians(bearing); val X = x - w / 2; val Y = y - h / 2
-        val dx = X * cos(b) - Y * sin(b); val dy = X * sin(b) + Y * cos(b)
-        val c = world(center, zoom); val s = size(zoom)
-        val wx = c[0] + dx; val wy = c[1] + dy
-        return LatLng(Math.toDegrees(atan(kotlin.math.sinh(PI * (1 - 2 * wy / s)))), wx / s * 360 - 180)
-    }
-    /** Logical pixels per metre at [lat] and [zoom]. */
-    fun pxPerMetre(lat: Double, zoom: Double) = size(zoom) / (40_075_016.7 * cos(Math.toRadians(lat)))
 }
 
-/** A fetched map image and the view it shows (logical size [w] x [h]). */
-private class MapImage(val bm: Bitmap, val center: LatLng, val zoom: Double, val bearing: Double, val w: Int, val h: Int)
+/**
+ * Web Mercator for map tiles: a 256-unit tile grid (one unit = one logical pixel at that zoom). The view turns so that
+ * its bearing points up; a world point at zoom [z] maps to the screen around the view centre.
+ */
+internal object TileMath {
+    const val TILE = 256.0
+    fun world(p: LatLng, z: Int): DoubleArray {
+        val s = TILE * (1 shl z); val lat = Math.toRadians(p.lat.coerceIn(-85.0, 85.0))
+        return doubleArrayOf((p.lng + 180) / 360 * s, (1 - ln(tan(lat) + 1 / cos(lat)) / PI) / 2 * s)
+    }
+    fun fromWorld(x: Double, y: Double, z: Int): LatLng {
+        val s = TILE * (1 shl z)
+        return LatLng(Math.toDegrees(atan(sinh(PI * (1 - 2 * y / s)))), x / s * 360 - 180)
+    }
+    /** Logical pixels per metre at [lat] and fractional zoom [zoom]. */
+    fun pxPerMetre(lat: Double, zoom: Double) = TILE * Math.pow(2.0, zoom) / (40_075_016.7 * cos(Math.toRadians(lat)))
+}
+
+/** Map tiles in memory: the most recently used ones (a tile is 512 x 512, 16-bit colour, half a megabyte). */
+private class TileCache(private val max: Int = 70) {
+    private val map = object : LinkedHashMap<Long, ImageBitmap>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ImageBitmap>?) = size > max
+    }
+    val loading = HashSet<Long>()
+    val failed = HashMap<Long, Long>()
+    @Synchronized operator fun get(k: Long) = map[k]
+    @Synchronized fun put(k: Long, b: ImageBitmap) { map[k] = b }
+    companion object { fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong() }
+}
 
 /**
- * The route on a street map you can pinch to zoom out or in and drag around (one finger), like a phone's maps app.
- * It follows you, turned the way you face, until you move it; then a "back to me" button returns to following.
- * Shows the route as Poppy's paw prints (a line when zoomed far out; the walked part faded), Poppy, you, the
- * destination flag and a scale bar. The image is a Mapbox static map; a new one is fetched when the view has moved.
+ * The route on a live street map: map tiles (so zooming and dragging are smooth, with no waiting for a new picture),
+ * turned the way you face while it follows you. Pinch to zoom, drag to look around; a button brings it back to you.
+ * The route as a dotted line, Poppy, you (an arrow), the destination flag and a scale bar.
  */
 @Composable
 internal fun RouteMap(w: Words, api: MapboxApi, route: Route?, along: Double, poppyAlong: Double, at: () -> LatLng?, heading: () -> Double,
-                      gender: String, modifier: Modifier = Modifier, startZoom: Double = 16.4, bottomInset: Float = 0f) {
+                      gender: String, modifier: Modifier = Modifier, startZoom: Double = 16.6, bottomInset: Float = 0f, topInset: Float = 0f) {
     val dens = LocalDensity.current.density
-    var box by remember { mutableStateOf(IntSize.Zero) }
-    var img by remember { mutableStateOf<MapImage?>(null) }
+    val scope = rememberCoroutineScope()
+    val cache = remember { TileCache() }
+    val gate = remember { Semaphore(6) }
+    var tilesVersion by remember { mutableIntStateOf(0) }
     var zoom by remember { mutableDoubleStateOf(startZoom) }
-    var free by remember { mutableStateOf<LatLng?>(null) }            // null = following you; else the centre you dragged to
+    var free by remember { mutableStateOf<LatLng?>(null) }              // null = following you; else the centre you dragged to
     var freeBearing by remember { mutableDoubleStateOf(0.0) }
-    var gestureAt by remember { mutableLongStateOf(0L) }
-    var frame by remember { mutableLongStateOf(0L) }                     // redraws a few times a second (you and Poppy move)
+    var bearing by remember { mutableDoubleStateOf(Double.NaN) }       // smoothed heading while following
+    var frame by remember { mutableLongStateOf(0L) }
     val tint = if (gender == "boy") Color(0xFF5FB3FF) else Color(0xFFFF7FBF)
-    LaunchedEffect(Unit) { while (true) { delay(150); frame++ } }
-    LaunchedEffect(box) {
-        if (box.width == 0) return@LaunchedEffect
-        val bw = box.width / dens; val bh = box.height / dens
-        // the image is at most 640 x 640 (logical); a bigger view gets a lower zoom image, drawn enlarged
-        val k = max(1.0, max(bw / 640.0, bh / 640.0))
-        val wl = (bw / k).roundToInt().coerceIn(120, 640); val hl = (bh / k).roundToInt().coerceIn(120, 640)
-        var lastFetch = 0L
+    val routeBlue = Color(0xFF1A73E8)
+    // the map turns smoothly with you (a little each frame), and you and Poppy move on it
+    LaunchedEffect(Unit) {
         while (true) {
-            delay(250)
-            val now = SystemClock.uptimeMillis()
-            if (now - gestureAt < 350 || now - lastFetch < 1200) continue
-            val c = free ?: at() ?: continue
-            val b = if (free != null) freeBearing else heading().let { if (it.isNaN()) 0.0 else it }
-            val z = zoom - ln(k) / ln(2.0)
-            val cur = img
-            val need = cur == null || kotlin.math.abs(cur.zoom - z) > 0.15 ||
-                Geo.distance(cur.center, c) * StaticMapProjection.pxPerMetre(c.lat, cur.zoom) > minOf(wl, hl) * 0.18 ||
-                (free == null && (kotlin.math.abs(GeoAlign.wrap(Math.toRadians(b - cur.bearing))) > Math.toRadians(25.0) || now - lastFetch > 10_000))
-            if (!need) continue
-            lastFetch = now
-            runCatching { withContext(Dispatchers.IO) { URL(api.staticMapUrl(null, c, z, b, wl, hl)).openStream().use { BitmapFactory.decodeStream(it) } } }
-                .onSuccess { bm -> if (bm != null) img = MapImage(bm, c, z, b, wl, hl) }
-                .onFailure { Log.w("FollowPoppy", "map: ${it.message}") }
+            delay(33); frame++
+            val h = heading()
+            if (!h.isNaN()) bearing = if (bearing.isNaN()) h else (bearing + Math.toDegrees(GeoAlign.wrap(Math.toRadians(h - bearing))) * 0.12 + 360) % 360
         }
     }
-    Box(modifier.onSizeChanged { box = it }) {
+    fun need(z: Int, x: Int, y: Int) {
+        val n = 1 shl z; if (y < 0 || y >= n) return
+        val xx = ((x % n) + n) % n; val k = TileCache.key(z, xx, y)
+        if (cache[k] != null || k in cache.loading) return
+        val f = cache.failed[k]; if (f != null && System.currentTimeMillis() - f < 15_000) return
+        cache.loading.add(k)
+        scope.launch {
+            val bm = gate.withPermit {
+                runCatching { withContext(Dispatchers.IO) {
+                    URL(api.tileUrl(z, xx, y)).openStream().use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }) }
+                } }.onFailure { Log.w("FollowPoppy", "tile $z/$xx/$y: ${it.message}") }.getOrNull()
+            }
+            cache.loading.remove(k)
+            if (bm != null) { cache.put(k, bm.asImageBitmap()); tilesVersion++ } else cache.failed[k] = System.currentTimeMillis()
+        }
+    }
+    Box(modifier) {
         Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
             detectTransformGestures { _, pan, gz, _ ->
-                val im = img ?: return@detectTransformGestures
-                gestureAt = SystemClock.uptimeMillis()
-                val bw = size.width / dens; val bh = size.height / dens
-                val k = max(1.0, max(bw / 640.0, bh / 640.0))
-                val scale = Math.pow(2.0, zoom - ln(k) / ln(2.0) - im.zoom)
-                // where the view's centre is now, in the image, moved by the drag
-                val c0 = free ?: at() ?: im.center
-                val q = StaticMapProjection.project(c0, im.center, im.zoom, im.bearing, im.w.toDouble(), im.h.toDouble())
-                val nq = doubleArrayOf(q[0] - pan.x / dens / scale, q[1] - pan.y / dens / scale)
-                if (free == null) freeBearing = im.bearing
-                if (pan.getDistance() > 0.5f || free != null) free = StaticMapProjection.unproject(nq[0], nq[1], im.center, im.zoom, im.bearing, im.w.toDouble(), im.h.toDouble())
-                zoom = (zoom + ln(gz.toDouble()) / ln(2.0)).coerceIn(12.0, 19.0)
+                val b = if (free != null) freeBearing else bearing.let { if (it.isNaN()) 0.0 else it }
+                val c0 = free ?: at() ?: return@detectTransformGestures
+                zoom = (zoom + ln(gz.toDouble()) / ln(2.0)).coerceIn(12.0, 19.5)
+                if (pan.getDistance() > 0.5f || free != null) {
+                    // the drag in screen pixels → map units at this zoom, turned back by the bearing
+                    val z = zoom.roundToInt(); val s = Math.pow(2.0, zoom - z) * dens
+                    val br = Math.toRadians(b); val px = -pan.x / s; val py = -pan.y / s
+                    val dx = px * cos(br) - py * sin(br); val dy = px * sin(br) + py * cos(br)
+                    val c = TileMath.world(c0, z)
+                    if (free == null) freeBearing = b
+                    free = TileMath.fromWorld(c[0] + dx, c[1] + dy, z)
+                }
             }
         }) {
-            frame.let { }                                                          // read: redraw as you move
-            val im = img ?: return@Canvas
-            val bw = size.width / dens; val bh = size.height / dens
-            val k = max(1.0, max(bw / 640.0, bh / 640.0))
-            val scale = Math.pow(2.0, zoom - ln(k) / ln(2.0) - im.zoom)
-            val vc = free ?: at() ?: im.center
-            val qv = StaticMapProjection.project(vc, im.center, im.zoom, im.bearing, im.w.toDouble(), im.h.toDouble())
-            val cx = size.width / 2; val cy = (size.height - bottomInset) / 2
-            fun sc(q: DoubleArray) = Offset((cx + (q[0] - qv[0]) * scale * dens).toFloat(), (cy + (q[1] - qv[1]) * scale * dens).toFloat())
-            fun px(p: LatLng) = sc(StaticMapProjection.project(p, im.center, im.zoom, im.bearing, im.w.toDouble(), im.h.toDouble()))
-            val tl = sc(doubleArrayOf(0.0, 0.0)); val br = sc(doubleArrayOf(im.w.toDouble(), im.h.toDouble()))
-            drawImage(im.bm.asImageBitmap(), dstOffset = IntOffset(tl.x.roundToInt(), tl.y.roundToInt()),
-                dstSize = IntSize((br.x - tl.x).roundToInt().coerceAtLeast(1), (br.y - tl.y).roundToInt().coerceAtLeast(1)))
-            val metrePx = (StaticMapProjection.pxPerMetre(vc.lat, im.zoom) * scale * dens).toFloat()
-            val r = route
-            if (r != null) {
-                fun g(s: Double) = Geo.fromEnu(r.line.origin, r.line.at(s))
-                // the route: a soft glowing line, and Poppy's paw prints on it when close enough to see them
-                val stepLine = (6.0 / metrePx).coerceIn(1.0, 40.0)
-                fun pathOf(s0: Double, s1: Double) = Path().apply { var s = s0; var first = true; while (s <= s1 + 1e-6) { val p = px(g(s.coerceAtMost(s1))); if (first) moveTo(p.x, p.y) else lineTo(p.x, p.y); first = false; if (s >= s1) break; s = (s + stepLine).coerceAtMost(s1) } }
-                val done = along.coerceIn(0.0, r.length)
-                val lw = (metrePx * 3.2f).coerceIn(6f, 20f)
-                if (done > 0.5) drawPath(pathOf(0.0, done), tint.copy(alpha = 0.35f), style = Stroke(lw, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                val ahead = pathOf(done, r.length)
-                drawPath(ahead, tint.copy(alpha = 0.28f), style = Stroke(lw * 2.2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(ahead, tint, style = Stroke(lw, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                if (metrePx > 1.6f) {
-                    val step = (26f / metrePx).toDouble().coerceAtLeast(3.0); var kk = 0; var s = done
-                    while (s <= r.length) {
-                        val pa = px(g(s)); val pb = px(g(s + 1.0))
-                        if (pa.x > -20 && pa.y > -20 && pa.x < size.width + 20 && pa.y < size.height + 20) {
-                            val ang = atan2((pb.y - pa.y).toDouble(), (pb.x - pa.x).toDouble()).toFloat()
-                            val side = if (kk % 2 == 0) 1f else -1f
-                            paw(pa + Offset(-sin(ang) * side * lw * 0.22f, cos(ang) * side * lw * 0.22f), ang, lw * 0.16f, Color.White.copy(alpha = 0.92f))
+            frame.let { }; tilesVersion.let { }                                // redraw on time and on new tiles
+            val vc = free ?: at() ?: return@Canvas
+            val b = if (free != null) freeBearing else bearing.let { if (it.isNaN()) 0.0 else it }
+            val z = zoom.roundToInt().coerceIn(1, 20)
+            val s = Math.pow(2.0, zoom - z)                                    // logical units per tile unit
+            val k = (s * dens).toFloat()
+            val cx = size.width / 2; val cy = topInset + (size.height - bottomInset - topInset) * 0.55f
+            val c = TileMath.world(vc, z)
+            // tiles covering the turned view (a circle around the centre is enough)
+            val r = hypot(max(cx, size.width - cx).toDouble(), max(cy, size.height - cy).toDouble()) / k
+            val t0x = floor((c[0] - r) / TileMath.TILE).toInt(); val t1x = floor((c[0] + r) / TileMath.TILE).toInt()
+            val t0y = floor((c[1] - r) / TileMath.TILE).toInt(); val t1y = floor((c[1] + r) / TileMath.TILE).toInt()
+            drawRect(Color(0xFFEDEFF2))
+            withTransform({ translate(cx, cy); rotate(-b.toFloat(), Offset.Zero); scale(k, k, Offset.Zero) }) {
+                for (ty in t0y..t1y) for (tx in t0x..t1x) {
+                    need(z, tx, ty)
+                    val n = 1 shl z; val xx = ((tx % n) + n) % n
+                    val ox = (tx * TileMath.TILE - c[0]).toFloat(); val oy = (ty * TileMath.TILE - c[1]).toFloat()
+                    val img = cache[TileCache.key(z, xx, ty)]
+                    if (img != null) translate(ox, oy) { drawImage(img, dstSize = IntSize(257, 257)) }
+                    else {
+                        // not here yet: the parent tile, enlarged, until it comes
+                        val p = cache[TileCache.key(z - 1, xx / 2, ty / 2)]
+                        if (p != null) translate(ox, oy) {
+                            drawImage(p, srcOffset = androidx.compose.ui.unit.IntOffset((xx % 2) * p.width / 2, (ty % 2) * p.height / 2),
+                                srcSize = IntSize(p.width / 2, p.height / 2), dstSize = IntSize(257, 257))
                         }
-                        s += step; kk++
                     }
                 }
-                // destination flag
-                val d = px(g(r.length))
-                drawLine(Color.White, d, d + Offset(0f, -34f), 4f)
-                drawPath(Path().apply { moveTo(d.x, d.y - 34f); lineTo(d.x + 26f, d.y - 27f); lineTo(d.x, d.y - 19f); close() }, Color(0xFFF5B841))
-                drawCircle(Color(0xFFF5B841), 6f, d)
-                if (!poppyAlong.isNaN()) miniPoppy(px(g(poppyAlong)), tint, 1f)
             }
-            // you: an arrow the way you face (up while following, turned when you moved the map)
+            fun px(p: LatLng): Offset {
+                val q = TileMath.world(p, z); val dx = (q[0] - c[0]) * k; val dy = (q[1] - c[1]) * k; val br = Math.toRadians(b)
+                return Offset((cx + dx * cos(br) + dy * sin(br)).toFloat(), (cy - dx * sin(br) + dy * cos(br)).toFloat())
+            }
+            val metrePx = (TileMath.pxPerMetre(vc.lat, zoom) * dens).toFloat()
+            val rt = route
+            if (rt != null) {
+                fun g(sAlong: Double) = Geo.fromEnu(rt.line.origin, rt.line.at(sAlong))
+                // the route as dots, like a maps app: the walked part faded; a dot every ~9 px
+                val done = along.coerceIn(0.0, rt.length)
+                val step = (9 * dens / metrePx).toDouble().coerceAtLeast(0.5)
+                val dot = (3.6f * dens).coerceAtMost(metrePx * 1.6f).coerceAtLeast(2.2f * dens)
+                var sA = 0.0
+                while (sA <= rt.length) {
+                    val p = px(g(sA))
+                    if (p.x > -20 && p.y > -20 && p.x < size.width + 20 && p.y < size.height + 20) {
+                        if (sA < done) drawCircle(routeBlue.copy(alpha = 0.3f), dot * 0.8f, p)
+                        else { drawCircle(Color.White, dot + 1.2f * dens, p); drawCircle(routeBlue, dot, p) }
+                    }
+                    sA += step
+                }
+                // destination: a ring (as in a maps app) and a little flag
+                val d = px(g(rt.length))
+                drawCircle(Color.White, 9f * dens, d); drawCircle(Color(0xFF202124), 9f * dens, d, style = Stroke(3f * dens))
+                drawLine(Color(0xFF202124), d + Offset(0f, -9f * dens), d + Offset(0f, -26f * dens), 2.5f * dens)
+                drawPath(Path().apply { moveTo(d.x, d.y - 26f * dens); lineTo(d.x + 14f * dens, d.y - 21f * dens); lineTo(d.x, d.y - 16f * dens); close() }, Color(0xFFF5B841))
+                if (!poppyAlong.isNaN()) miniPoppy(px(g(poppyAlong)), tint, dens / 2.6f)
+            }
+            // you: a blue arrow with a white rim; up while following (the map turns), turned when you moved the map
             at()?.let { p ->
-                val me = px(p)
-                val rot = if (free == null) 0f else (heading().let { if (it.isNaN()) im.bearing else it } - im.bearing).toFloat()
-                drawCircle(Color(0x4022D3EE), 30f, me)
+                val me = px(p); val u = dens
+                val rot = if (free == null) 0f else (heading().let { if (it.isNaN()) b else it } - b).toFloat()
+                drawCircle(Color(0x331A73E8), 26f * u, me)
                 rotate(rot, me) {
-                    drawPath(Path().apply { moveTo(me.x, me.y - 18f); lineTo(me.x + 13f, me.y + 13f); lineTo(me.x, me.y + 6f); lineTo(me.x - 13f, me.y + 13f); close() }, Color.White)
-                    drawPath(Path().apply { moveTo(me.x, me.y - 13f); lineTo(me.x + 9f, me.y + 9f); lineTo(me.x, me.y + 4f); lineTo(me.x - 9f, me.y + 9f); close() }, Color(0xFF22D3EE))
+                    drawPath(Path().apply { moveTo(me.x, me.y - 15f * u); lineTo(me.x + 11f * u, me.y + 11f * u); lineTo(me.x, me.y + 5f * u); lineTo(me.x - 11f * u, me.y + 11f * u); close() }, Color.White)
+                    drawPath(Path().apply { moveTo(me.x, me.y - 11f * u); lineTo(me.x + 8f * u, me.y + 8.5f * u); lineTo(me.x, me.y + 4f * u); lineTo(me.x - 8f * u, me.y + 8.5f * u); close() }, routeBlue)
                 }
             }
             scaleBar(metrePx, dens, bottomInset)
         }
-        if (img == null) Text(w.t("טוען מפה…", "Loading the map…"), color = Color(0xFF9FB0C8), fontSize = 14.sp, modifier = Modifier.align(Alignment.Center))
         // back to following you
-        if (free != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 14.dp).size(44.dp).clip(CircleShape)
-            .background(Color(0xE60B1220)).border(1.dp, Color(0x55FFFFFF), CircleShape).clickable { free = null; zoom = startZoom }, contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(20.dp)) {                                     // a location arrow
+        if (free != null) Box(Modifier.align(Alignment.TopEnd).padding(top = (topInset / dens).dp + 12.dp, end = 16.dp).size(44.dp).clip(CircleShape)
+            .background(Color.White).border(1.dp, Color(0x22000000), CircleShape).clickable { free = null; zoom = startZoom }, contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(20.dp)) {
                 val s = size.width
-                drawPath(Path().apply { moveTo(s * 0.9f, s * 0.1f); lineTo(s * 0.55f, s * 0.92f); lineTo(s * 0.45f, s * 0.55f); lineTo(s * 0.08f, s * 0.45f); close() }, Color(0xFF22D3EE))
+                drawPath(Path().apply { moveTo(s * 0.9f, s * 0.1f); lineTo(s * 0.55f, s * 0.92f); lineTo(s * 0.45f, s * 0.55f); lineTo(s * 0.08f, s * 0.45f); close() }, routeBlue)
             }
         }
     }
@@ -236,53 +276,60 @@ private fun DrawScope.scaleBar(metrePx: Float, dens: Float, bottomInset: Float) 
     if (metrePx <= 0f) return
     val want = 90 * dens / metrePx
     val nice = listOf(10, 20, 50, 100, 200, 500, 1000, 2000, 5000).lastOrNull { it <= want } ?: 10
-    val len = nice * metrePx; val x = 16 * dens; val y = size.height - bottomInset - 18 * dens
-    drawLine(Color(0x99000000), Offset(x, y), Offset(x + len, y), 7f, StrokeCap.Round)
-    drawLine(Color.White, Offset(x, y), Offset(x + len, y), 3.5f, StrokeCap.Round)
-    val label = if (nice >= 1000) "${nice / 1000} km" else "$nice m"
-    drawContext.canvas.nativeCanvas.drawText(label, x, y - 8 * dens, android.graphics.Paint().apply {
-        color = android.graphics.Color.WHITE; textSize = 12 * dens; isAntiAlias = true; setShadowLayer(4f, 0f, 1f, android.graphics.Color.BLACK)
+    val len = nice * metrePx; val x = 16 * dens; val y = size.height - bottomInset - 14 * dens
+    drawLine(Color(0x66000000), Offset(x, y), Offset(x + len, y), 6f, StrokeCap.Round)
+    drawLine(Color(0xFF3C4043), Offset(x, y), Offset(x + len, y), 3f, StrokeCap.Round)
+    drawContext.canvas.nativeCanvas.drawText(if (nice >= 1000) "${nice / 1000} km" else "$nice m", x, y - 7 * dens, android.graphics.Paint().apply {
+        color = android.graphics.Color.rgb(60, 64, 67); textSize = 12 * dens; isAntiAlias = true; isFakeBoldText = true
     })
 }
 
-/**
- * The map that slides up from the bottom with a tap: a frosted-glass dome (a window onto the map) with the map filling
- * it edge to edge; pinch and drag it like a maps app. Drag the handle down (or tap Close) to close.
- */
-@Composable
-internal fun MapSheet(w: Words, api: MapboxApi, route: Route?, along: Double, poppyAlong: Double, at: () -> LatLng?, heading: () -> Double,
-                      gender: String, remaining: String, onClose: () -> Unit) {
-    var drag by remember { mutableFloatStateOf(0f) }
-    val shape: Shape = DomeShape(0.42f, 30.dp)
-    Box(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp).height(470.dp).graphicsLayer { translationY = drag }
-            .shadow(28.dp, shape).clip(shape).background(Color(0xFF0B1220))
-    ) {
-        RouteMap(w, api, route, along, poppyAlong, at, heading, gender, Modifier.fillMaxSize(), bottomInset = 0f)
-        // the glass rim and a soft shade under the top edge, so the dome reads as a window
-        Box(Modifier.fillMaxSize().border(1.5.dp, Brush.verticalGradient(listOf(Color(0xCCFFFFFF), Color(0x33FFFFFF), Color(0x14FFFFFF))), shape))
-        // the handle: drag it down to close
-        Box(Modifier.align(Alignment.TopCenter).padding(top = 10.dp).width(120.dp).height(36.dp)
-            .pointerInput(Unit) { detectVerticalDragGestures(onDragEnd = { if (drag > 120f) onClose(); drag = 0f }, onDragCancel = { drag = 0f }) { _, dy -> drag = (drag + dy).coerceAtLeast(0f) } }
-            .clickable { onClose() }, contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.padding(top = 4.dp).width(44.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xCCFFFFFF)))
-        }
-        Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp).clip(RoundedCornerShape(20.dp))
-            .background(Color(0xD90B1220)).border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp)).padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Text(remaining, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Spacer(Modifier.width(8.dp))
-            Text(w.t("סגירה", "Close"), color = Color(0xFF0B1220), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Color.White).clickable { onClose() }.padding(horizontal = 16.dp, vertical = 8.dp))
-        }
+/** The top of the map sheet: one wide, gentle arc across the whole width (part of a big circle), straight below. */
+private class ArchShape(private val radiusOfWidth: Float = 1.05f) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val w = size.width; val h = size.height; val r = w * radiusOfWidth
+        val a = Math.toDegrees(kotlin.math.acos((w / 2 / r).toDouble())).toFloat()       // the arc meets the sides at this angle
+        val edge = r - kotlin.math.sqrt(r * r - w * w / 4)
+        return Outline.Generic(Path().apply {
+            moveTo(0f, edge); arcTo(Rect(w / 2 - r, 0f, w / 2 + r, 2 * r), 180f + a, 180f - 2 * a, false)
+            lineTo(w, h); lineTo(0f, h); close()
+        })
     }
 }
 
-/** One paw print: a pad and three toes, pointing along [angle] (radians, screen). */
-private fun DrawScope.paw(c: Offset, angle: Float, s: Float, color: Color) {
-    rotate(degrees = Math.toDegrees(angle.toDouble()).toFloat() + 90f, pivot = c) {
-        drawOval(color, Offset(c.x - s * 1.15f, c.y - s * 0.5f), Size(s * 2.3f, s * 1.9f))
-        for ((dx, dy) in listOf(-1.25f to -1.35f, 0f to -1.85f, 1.25f to -1.35f)) drawCircle(color, s * 0.55f, Offset(c.x + dx * s, c.y + dy * s))
+/**
+ * The map that comes up from the bottom with a tap, like a phone's live-view maps: a wide arc of map across the whole
+ * screen, tipped back a little (as if lying on the ground in front of you), the street map filling it edge to edge.
+ * Pinch and drag it; the button at the top closes it (or drag down).
+ */
+@Composable
+internal fun MapSheet(w: Words, api: MapboxApi, route: Route?, along: Double, poppyAlong: Double, at: () -> LatLng?, heading: () -> Double,
+                      gender: String, remaining: String, bottomInset: Float, onClose: () -> Unit) {
+    var drag by remember { mutableFloatStateOf(0f) }
+    val shape: Shape = remember { ArchShape(1.05f) }
+    val dens = LocalDensity.current.density
+    Box(
+        Modifier.fillMaxWidth().height(520.dp).graphicsLayer {
+            translationY = drag
+            rotationX = 14f; cameraDistance = 14f * density; transformOrigin = TransformOrigin(0.5f, 1f)   // tipped back
+        }.clip(shape).background(Color(0xFFEDEFF2))
+    ) {
+        RouteMap(w, api, route, along, poppyAlong, at, heading, gender, Modifier.fillMaxSize(), startZoom = 17.0, bottomInset = bottomInset, topInset = 40 * dens)
+        // a light rim along the arc
+        Canvas(Modifier.fillMaxSize()) {
+            val r = size.width * 1.05f; val a = Math.toDegrees(kotlin.math.acos((size.width / 2 / r).toDouble())).toFloat()
+            drawArc(Color(0x88FFFFFF), 180f + a, 180f - 2 * a, false, Offset(size.width / 2 - r, 0f), Size(2 * r, 2 * r), style = Stroke(3 * dens))
+        }
+        // close: a small pill at the top (drag it down, or tap)
+        Row(Modifier.align(Alignment.TopCenter).padding(top = 14.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF1A73E8))
+            .pointerInput(Unit) { detectVerticalDragGestures(onDragEnd = { if (drag > 120f) onClose(); drag = 0f }, onDragCancel = { drag = 0f }) { _, dy -> drag = (drag + dy).coerceAtLeast(0f) } }
+            .clickable { onClose() }.padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Canvas(Modifier.size(14.dp)) {                                     // a check mark
+                drawPath(Path().apply { moveTo(size.width * 0.1f, size.height * 0.55f); lineTo(size.width * 0.4f, size.height * 0.85f); lineTo(size.width * 0.92f, size.height * 0.2f) }, Color.White, style = Stroke(2.4f * dens, cap = StrokeCap.Round))
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(w.t("סגירה", "Done") + " · " + remaining, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -293,8 +340,8 @@ private fun DrawScope.miniPoppy(c: Offset, tint: Color, k: Float) {
         drawOval(Color.White, Offset(c.x + sx * r * 0.42f - r * 0.32f, c.y - r * 2.05f), Size(r * 0.64f, r * 1.5f))
         drawOval(tint, Offset(c.x + sx * r * 0.42f - r * 0.24f, c.y - r * 1.97f), Size(r * 0.48f, r * 1.34f))
     }
-    drawCircle(Color.White, r + 3f, c); drawCircle(tint, r, c)
-    for (sx in listOf(-1f, 1f)) { drawCircle(Color(0xFF1C1622), r * 0.2f, Offset(c.x + sx * r * 0.36f, c.y - r * 0.05f)); drawCircle(Color.White, r * 0.07f, Offset(c.x + sx * r * 0.36f + 1.5f, c.y - r * 0.12f)) }
+    drawCircle(Color.White, r + 3f * k, c); drawCircle(tint, r, c)
+    for (sx in listOf(-1f, 1f)) { drawCircle(Color(0xFF1C1622), r * 0.2f, Offset(c.x + sx * r * 0.36f, c.y - r * 0.05f)); drawCircle(Color.White, r * 0.07f, Offset(c.x + sx * r * 0.36f + 1.5f * k, c.y - r * 0.12f)) }
     drawCircle(Color(0x66FF7BA8), r * 0.14f, Offset(c.x - r * 0.62f, c.y + r * 0.25f)); drawCircle(Color(0x66FF7BA8), r * 0.14f, Offset(c.x + r * 0.62f, c.y + r * 0.25f))
-    drawArc(Color(0xFF2A1A24), 20f, 140f, false, Offset(c.x - r * 0.22f, c.y + r * 0.1f), Size(r * 0.44f, r * 0.3f), style = Stroke(width = 2.5f))
+    drawArc(Color(0xFF2A1A24), 20f, 140f, false, Offset(c.x - r * 0.22f, c.y + r * 0.1f), Size(r * 0.44f, r * 0.3f), style = Stroke(width = 2.5f * k))
 }

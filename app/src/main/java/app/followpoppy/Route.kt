@@ -90,6 +90,9 @@ class MapboxApi(private val token: String, var language: String = "en") {
         }
     }
 
+    /** One 256 px map tile (drawn at twice the resolution for sharp phone screens) of the street map. */
+    fun tileUrl(z: Int, x: Int, y: Int) = "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/$z/$x/$y@2x?access_token=$token"
+
     /** A small street map for the corner / map mode: route in cyan, centred on [center], turned to [bearing]. */
     fun staticMapUrl(route: Route?, center: LatLng, zoom: Double, bearing: Double, w: Int, h: Int): String {
         val overlays = listOfNotNull(
