@@ -15,8 +15,10 @@ const girl = gender !== 'boy';
 const C = hex => new THREE.Color(hex).convertSRGBToLinear();
 
 // ---------------- colours and materials ----------------
-const FUR = 0xf4f1f6, HOODIE = girl ? 0xff4fa3 : 0x2f6bff, HOODIE_DARK = girl ? 0xe03b8a : 0x2457d6;
-const EAR_IN = girl ? 0xff8cc2 : 0x6eb4ff, PAD = 0xff9cc6, IRIS = girl ? 0x5a2a45 : 0x2a62c9, IRIS_LOW = girl ? 0x9a5578 : 0x6fb2ff;
+// girl: pink hoodie; boy: black hoodie, sunglasses and sneakers (as in the reference pictures). Both: blue eyes, the
+// split pink-blue heart on the hoodie; the inside of the ears pink (girl) or blue (boy)
+const FUR = 0xf6f4f8, HOODIE = girl ? 0xff5aa8 : 0x26262d, HOODIE_DARK = girl ? 0xe8418f : 0x1a1a20;
+const EAR_IN = girl ? 0xff8cc2 : 0x6eb4ff, PAD = 0xff9cc6, IRIS = 0x2f6fd6, IRIS_LOW = 0x7cc0ff;
 const std = (hex, rough = 0.85, extra = {}) => Object.assign(new THREE.MeshStandardMaterial({ color: C(hex), roughness: rough, metalness: 0 }), extra);
 const M = {
   skin: std(FUR, 0.95), hoodie: std(HOODIE, 0.9), hoodieDark: std(HOODIE_DARK, 0.92), white: std(0xffffff, 0.7),
@@ -27,7 +29,7 @@ const M = {
 };
 
 // ---------------- fur: shells of a strand texture over the white parts ----------------
-const SHELLS = 8;
+const SHELLS = 10;
 const strands = (() => {
   const W = 512, H = 256, d = new Uint8Array(W * H * 4);
   let seed = 11; const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
@@ -44,8 +46,8 @@ const strands = (() => {
 const shellMats = new Map();
 function shellMat(hex, k) {                                     // k: 0 root … 1 tip; darker roots give the fur depth
   const key = hex + ':' + k; if (shellMats.has(key)) return shellMats.get(key);
-  const m = new THREE.MeshStandardMaterial({ color: C(hex).multiplyScalar(0.78 + 0.24 * k), roughness: 1, metalness: 0, side: THREE.FrontSide });
-  m.alphaTest = 0.18 + 0.62 * k; m.userData.rgba = strands; shellMats.set(key, m); return m;
+  const m = new THREE.MeshStandardMaterial({ color: C(hex).multiplyScalar(0.86 + 0.16 * k), roughness: 1, metalness: 0, side: THREE.FrontSide });
+  m.alphaTest = 0.14 + 0.62 * k; m.userData.rgba = strands; shellMats.set(key, m); return m;
 }
 const geoCache = new Map();
 function sphereGeo(seg = 32) { const k = 's' + seg; if (!geoCache.has(k)) geoCache.set(k, new THREE.SphereGeometry(1, seg, Math.round(seg * 0.7))); return geoCache.get(k); }
@@ -64,7 +66,8 @@ function furBall(parent, hex, [rx, ry, rz], pos, { length = 0.09, uv = [6, 3], r
   const g = new THREE.Group(); g.position.set(...pos); if (rot) g.rotation.set(...rot); g.scale.set(rx, ry, rz); parent.add(g);
   if (!coreMat) { if (!coreMats.has(hex)) coreMats.set(hex, std(hex, 0.95)); coreMat = coreMats.get(hex); }
   g.add(new THREE.Mesh(sphereGeo(seg), coreMat));
-  for (let i = 1; i <= shells; i++) g.add(new THREE.Mesh(shellGeo(sphereGeo(seg), length * i / shells, uv), shellMat(hex, i / shells)));
+  const uvf = [uv[0] * 1.7, uv[1] * 1.7];                       // finer strands: plush, not shaggy
+  for (let i = 1; i <= shells; i++) g.add(new THREE.Mesh(shellGeo(sphereGeo(seg), length * i / shells, uvf), shellMat(hex, i / shells)));
   return g;
 }
 function ball(parent, mat, [rx, ry, rz], pos, rot, seg = 32) {
@@ -86,8 +89,8 @@ const torso = group(body, 'Torso');
 // hoodie: a soft rounded body (lathe), a ribbed hem, the hood lying behind the neck, drawstrings, a white heart
 const prof = [[0.0, 0.12], [0.1, 0.125], [0.17, 0.15], [0.205, 0.2], [0.218, 0.28], [0.212, 0.36], [0.19, 0.43], [0.15, 0.49], [0.1, 0.525], [0.0, 0.535]]
   .map(([r, y]) => new THREE.Vector2(r, y));
-const hood = new THREE.Mesh(new THREE.LatheGeometry(new THREE.SplineCurve(prof).getPoints(40), 48), M.hoodie); torso.add(hood);
-const hem = new THREE.Mesh(new THREE.TorusGeometry(0.188, 0.022, 12, 48), M.hoodieDark); hem.rotation.x = Math.PI / 2; hem.position.y = 0.165; torso.add(hem);
+const hood = new THREE.Mesh(new THREE.LatheGeometry(new THREE.SplineCurve(prof).getPoints(40), 48), M.hoodie); hood.scale.set(1.06, 1, 1.04); torso.add(hood);
+const hem = new THREE.Mesh(new THREE.TorusGeometry(0.198, 0.023, 12, 48), M.hoodieDark); hem.rotation.x = Math.PI / 2; hem.position.y = 0.165; torso.add(hem);
 const collar = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.038, 14, 40), M.hoodie); collar.rotation.x = Math.PI / 2 + 0.25; collar.position.set(0, 0.515, -0.01); torso.add(collar);
 ball(torso, M.hoodie, [0.19, 0.12, 0.1], [0, 0.53, -0.14], [0.35, 0, 0]);            // the hood, down on the back
 ball(torso, M.hoodieDark, [0.15, 0.085, 0.06], [0, 0.545, -0.17], [0.35, 0, 0]);       // its opening, a shade darker
@@ -98,10 +101,18 @@ for (const s of [-1, 1]) {
 const heart = new THREE.Shape(); heart.moveTo(0, -0.035);
 heart.bezierCurveTo(-0.05, -0.0, -0.045, 0.035, -0.022, 0.035); heart.bezierCurveTo(-0.008, 0.035, 0, 0.025, 0, 0.015);
 heart.bezierCurveTo(0, 0.025, 0.008, 0.035, 0.022, 0.035); heart.bezierCurveTo(0.045, 0.035, 0.05, 0.0, 0, -0.035);
-const hg = new THREE.ExtrudeGeometry(heart, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 2, curveSegments: 16 });
-const hm = new THREE.Mesh(hg, M.white); hm.position.set(0.0, 0.315, 0.206); hm.rotation.x = -0.08; torso.add(hm);
+const half = sgn => { const h = new THREE.Shape(); h.moveTo(0, -0.035);
+  h.bezierCurveTo(sgn * 0.05, 0.0, sgn * 0.045, 0.035, sgn * 0.022, 0.035); h.bezierCurveTo(sgn * 0.008, 0.035, 0, 0.025, 0, 0.015); h.lineTo(0, -0.035); return h; };
+{                                                                  // a white edge, so the heart shows on any hoodie
+  const edge = new THREE.Mesh(new THREE.ExtrudeGeometry(heart, { depth: 0.006, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 2, curveSegments: 16 }), M.white);
+  edge.scale.setScalar(1.45); edge.position.set(0.0, 0.322, 0.211); edge.rotation.x = -0.08; torso.add(edge);
+}
+for (const [sgn, hex] of [[-1, 0xff5fae], [1, 0x4f9dff]]) {
+  const hm = new THREE.Mesh(new THREE.ExtrudeGeometry(half(sgn), { depth: 0.008, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.003, bevelSegments: 2, curveSegments: 16 }), std(hex, 0.5));
+  hm.scale.setScalar(1.25); hm.position.set(0.0, 0.32, 0.217); hm.rotation.x = -0.08; torso.add(hm);
+}
 // a pocket across the belly
-const pocket = new THREE.Mesh(new THREE.CylinderGeometry(0.216, 0.222, 0.075, 40, 1, true, -0.85, 1.7), M.hoodieDark); pocket.position.y = 0.23; torso.add(pocket);
+const pocket = new THREE.Mesh(new THREE.CylinderGeometry(0.229, 0.235, 0.075, 40, 1, true, -0.85, 1.7), M.hoodieDark); pocket.position.y = 0.23; torso.add(pocket);
 // short furry legs under the hoodie, and a round tail
 for (const s of [-1, 1]) furBall(torso, FUR, [0.085, 0.07, 0.085], [s * 0.085, 0.12, 0.0], { uv: [4, 2] });
 furBall(torso, FUR, [0.075, 0.075, 0.07], [0, 0.2, -0.205], { length: 0.16, uv: [4, 2] });
@@ -109,10 +120,21 @@ furBall(torso, FUR, [0.075, 0.075, 0.07], [0, 0.2, -0.205], { length: 0.16, uv: 
 // feet: chubby, with a pink paw pad underneath (shows when she lifts them)
 const feet = [-1, 1].map(s => {
   const f = group(body, s < 0 ? 'FootL' : 'FootR', [s * 0.09, 0.05, 0.03]);
-  furBall(f, FUR, [0.07, 0.055, 0.1], [0, 0, 0.02], { uv: [4, 2] });
-  const pad = group(f, null, [0, -0.045, 0.0], [Math.PI / 2 + 0.25, 0, 0]);
-  ball(pad, M.pad, [0.04, 0.05, 0.008], [0, -0.01, 0]);
-  for (const [x, y] of [[-0.028, 0.045], [0, 0.058], [0.028, 0.045]]) ball(pad, M.pad, [0.013, 0.015, 0.006], [x, y, 0]);
+  if (girl) {
+    furBall(f, FUR, [0.07, 0.055, 0.1], [0, 0, 0.02], { uv: [4, 2] });
+    const pad = group(f, null, [0, -0.045, 0.0], [Math.PI / 2 + 0.25, 0, 0]);
+    ball(pad, M.pad, [0.04, 0.05, 0.008], [0, -0.01, 0]);
+    for (const [x, y] of [[-0.028, 0.045], [0, 0.058], [0.028, 0.045]]) ball(pad, M.pad, [0.013, 0.015, 0.006], [x, y, 0]);
+  } else {
+    // sneakers: white with a pink and a blue panel, a thick sole, grey laces, a padded collar
+    const white = std(0xfbfbfd, 0.55), grey = std(0xc9ccd6, 0.6);
+    ball(f, std(0xeef0f4, 0.7), [0.078, 0.022, 0.115], [0, -0.038, 0.025]);                 // sole
+    ball(f, white, [0.072, 0.052, 0.108], [0, -0.005, 0.02]);                                // upper
+    ball(f, std(0xff6fb1, 0.5), [0.074, 0.03, 0.06], [0, -0.012, -0.03]);                     // heel panel, pink
+    ball(f, std(0x4f9dff, 0.5), [0.073, 0.024, 0.05], [0, -0.016, 0.075]);                    // toe panel, blue
+    ball(f, white, [0.05, 0.03, 0.04], [0, 0.04, -0.015]);                                     // collar
+    for (let k = 0; k < 3; k++) tube(f, grey, [[-0.022, 0.034 - k * 0.012, 0.045 + k * 0.022], [0.022, 0.034 - k * 0.012, 0.045 + k * 0.022]], 0.0045, 4);
+  }
   return f;
 });
 
@@ -130,12 +152,13 @@ const arms = [-1, 1].map(s => {
 
 // ---------------- the head ----------------
 const face = group(body, 'Face', [0, 0.52, 0]);
-furBall(face, FUR, [0.335, 0.295, 0.3], [0, 0.27, 0], { uv: [8, 4], length: 0.075, seg: 44 });
-// puffy cheeks and the muzzle
-for (const s of [-1, 1]) furBall(face, FUR, [0.095, 0.075, 0.07], [s * 0.065, 0.165, 0.245], { uv: [3, 2], length: 0.1, shells: 5 });
-ball(face, M.nose, [0.032, 0.022, 0.02], [0, 0.205, 0.315]);
-ball(face, M.white, [0.009, 0.006, 0.004], [-0.01, 0.214, 0.333]);                        // a little shine on the nose
-for (const s of [-1, 1]) ball(face, M.blush, [0.06, 0.035, 0.01], [s * 0.2, 0.17, 0.245], [0, s * 0.55, 0]);
+furBall(face, FUR, [0.37, 0.31, 0.31], [0, 0.27, 0], { uv: [8, 4], length: 0.06, seg: 44 });
+// puffy cheeks and the muzzle, chubby
+for (const s of [-1, 1]) furBall(face, FUR, [0.12, 0.09, 0.085], [s * 0.075, 0.155, 0.23], { uv: [3, 2], length: 0.08, shells: 6 });
+furBall(face, FUR, [0.085, 0.06, 0.07], [0, 0.11, 0.235], { uv: [3, 2], length: 0.08, shells: 6 });
+ball(face, M.nose, [0.032, 0.022, 0.02], [0, 0.205, 0.322]);
+ball(face, M.white, [0.009, 0.006, 0.004], [-0.01, 0.214, 0.34]);                        // a little shine on the nose
+for (const s of [-1, 1]) ball(face, M.blush, [0.06, 0.035, 0.01], [s * 0.215, 0.18, 0.25], [0, s * 0.6, 0]);
 // eyebrows
 for (const s of [-1, 1]) tube(face, M.brow, [[s * 0.075, 0.435, 0.27], [s * 0.125, 0.452, 0.262], [s * 0.172, 0.44, 0.24]], 0.007, 12);
 
@@ -161,8 +184,25 @@ for (const s of [-1, 1]) {
   eyeLooks.push(happy, closed);
 }
 
+// his sunglasses: two rounded black lenses with a glint, a bridge and the arms back to the head (always on)
+if (!girl) {
+  const glasses = group(face, null, [0, 0.29, 0]);
+  const lensShape = new THREE.Shape(); const lw = 0.092, lh = 0.07, r = 0.035;
+  lensShape.moveTo(-lw + r, -lh); lensShape.lineTo(lw - r, -lh); lensShape.quadraticCurveTo(lw, -lh, lw, -lh + r); lensShape.lineTo(lw, lh - r);
+  lensShape.quadraticCurveTo(lw, lh, lw - r, lh); lensShape.lineTo(-lw + r, lh); lensShape.quadraticCurveTo(-lw, lh, -lw, lh - r); lensShape.lineTo(-lw, -lh + r); lensShape.quadraticCurveTo(-lw, -lh, -lw + r, -lh);
+  const lensGeo = new THREE.ExtrudeGeometry(lensShape, { depth: 0.012, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.005, bevelSegments: 3, curveSegments: 12 });
+  const lensMat = std(0x0b0b10, 0.08), frame = std(0x15151a, 0.3);
+  for (const s of [-1, 1]) {
+    // in front of the eyes (which stand out of the fur), following the face's curve
+    const l = new THREE.Mesh(lensGeo, lensMat); l.position.set(s * 0.122, -0.005, 0.322); l.rotation.y = s * 0.3; glasses.add(l);
+    ball(glasses, M.shine, [0.034, 0.007, 0.003], [s * 0.122 - 0.025, 0.025, 0.343 - s * 0.01], [0, s * 0.3, 0.6]);
+    tube(glasses, frame, [[s * 0.205, 0.02, 0.29], [s * 0.32, 0.03, 0.15], [s * 0.36, 0.02, 0.0]], 0.009, 12);
+  }
+  tube(glasses, frame, [[-0.04, 0.02, 0.345], [0, 0.03, 0.352], [0.04, 0.02, 0.345]], 0.009, 10);
+}
+
 // mouths: a small smile, an open happy grin, a little "o"
-const mouth = group(face, null, [0, 0.165, 0.305]);
+const mouth = group(face, null, [0, 0.162, 0.318]);
 const smile = group(mouth, 'MouthSmile');
 tube(smile, M.ink, [[-0.05, 0.01, -0.004], [-0.025, -0.016, 0.005], [0, -0.002, 0.009], [0.025, -0.016, 0.005], [0.05, 0.01, -0.004]], 0.0065, 24);
 const grin = group(mouth, 'MouthGrin');
@@ -174,12 +214,12 @@ ball(oh, M.mouth, [0.02, 0.024, 0.01], [0, -0.01, 0.004]);
 
 // ears: long, white outside and on the rim, coloured only inside
 const ears = [-1, 1].map(s => {
-  const g = group(face, s < 0 ? 'EarL' : 'EarR', [s * 0.12, 0.5, -0.03], [-0.12, 0, -s * 0.16]);
-  furBall(g, FUR, [0.078, 0.25, 0.05], [0, 0.22, 0], { uv: [3, 5] });
+  const g = group(face, s < 0 ? 'EarL' : 'EarR', [s * 0.13, 0.5, -0.03], [-0.12, 0, -s * 0.2]);
+  furBall(g, FUR, [0.09, 0.26, 0.06], [0, 0.23, 0], { uv: [3, 5], length: 0.07 });
   // the inside: a soft pad of colour set into the front of the ear, with short velvet fur; white all around it
-  const inner = group(g, null, [0, 0.205, 0.046], [-0.04, 0, 0]);
-  furBall(inner, EAR_IN, [0.046, 0.185, 0.016], [0, 0, 0], { uv: [3, 6], length: 0.12, shells: 3, coreMat: M.earIn });
-  g.userData.base = -s * 0.16;
+  const inner = group(g, null, [0, 0.215, 0.056], [-0.04, 0, 0]);
+  furBall(inner, EAR_IN, [0.058, 0.2, 0.016], [0, 0, 0], { uv: [3, 6], length: 0.12, shells: 3, coreMat: M.earIn });
+  g.userData.base = -s * 0.2;
   return g;
 });
 
