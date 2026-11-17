@@ -212,6 +212,10 @@ private fun floorHit(hr: HitResult, minUp: Float = 0.8f, inPolygon: Boolean = tr
     else -> false
 }
 
+/** The floor is this far below a hand-held phone (m): a bed (~1 m below) or a table is not the floor. */
+private const val FLOOR_MIN = 1.05
+private const val FLOOR_MAX = 2.0
+
 /** Where on the camera view (fractions of width, height) the app asks ARCore for the street's height. */
 private val GROUND_PROBES = listOf(floatArrayOf(0.5f, 0.72f), floatArrayOf(0.3f, 0.82f), floatArrayOf(0.7f, 0.82f), floatArrayOf(0.5f, 0.9f), floatArrayOf(0.2f, 0.95f), floatArrayOf(0.8f, 0.95f))
 
@@ -323,7 +327,17 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
             delay(1000)
         }
     }
-    LaunchedEffect(Unit) { var flatSince = 0L; while (true) { val flat = sensors.pitchUp < 35; val now = SystemClock.uptimeMillis(); if (flat) { if (flatSince == 0L) flatSince = now; if (now - flatSince > 600) mapMode = true } else { flatSince = 0L; mapMode = false }; delay(150) } }
+    // the flat-phone map: only when the phone really lies flat (camera straight down, within ~12°) for a second; looking
+    // down at the sidewalk while walking is 25-50° and must not switch to the map. Back to AR as soon as it is lifted past 22°.
+    LaunchedEffect(Unit) {
+        var flatSince = 0L
+        while (true) {
+            val p = sensors.pitchUp; val now = SystemClock.uptimeMillis()
+            if (!mapMode) { if (p < 12) { if (flatSince == 0L) flatSince = now; if (now - flatSince > 1000) mapMode = true } else flatSince = 0L }
+            else if (p > 22) { mapMode = false; flatSince = 0L }
+            delay(120)
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { viewW = it.width; viewH = it.height }) {
         ARSceneView(
@@ -458,7 +472,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         runCatching { frame.hitTest(viewW * pr[0], viewH * pr[1]) }.getOrNull()?.firstOrNull { hr ->
                             val y = hr.hitPose.ty(); val t = hr.trackable
                             // the floor only: below hip height, and for depth points a surface facing up (not a wall or a fence)
-                            y < camPos.y - 0.9 && y > camPos.y - 2.2 && floorHit(hr)
+                            y < camPos.y - FLOOR_MIN && y > camPos.y - FLOOR_MAX && floorHit(hr)
                         }?.let { hr ->
                             holder.ground.add(tNow, hr.hitPose.ty().toDouble())
                             if (calib < 2) { holder.dots.addLast(V3(hr.hitPose.tx().toDouble(), hr.hitPose.ty().toDouble(), hr.hitPose.tz().toDouble())); while (holder.dots.size > 60) holder.dots.removeFirst() }
@@ -487,7 +501,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         if (kotlin.math.abs(pr - scanProgress) > 0.04f || pr == 1f) scanProgress = pr
                         if (!floorFound && found != null && pr >= 1f) { floorFound = true; holder.foundAt = tNow; buzz(25, 60, 25) }
                         // found: a tap on the floor confirms it (you choose the spot), or it goes on by itself after a moment
-                        if (floorFound && (holder.tapped || tNow - holder.foundAt > 3500)) {
+                        if (floorFound && (holder.tapped || tNow - holder.foundAt > 700)) {
                             found?.let { holder.groundY = it }
                             calib = 1; holder.lookFrom = tNow; holder.foundAt = tNow; reticlePx = emptyList()
                         }
@@ -589,7 +603,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         if (viewW > 0 && holder.frames % 3 == 0L) pj.screen(pp.ground)?.let { foot ->
                             val hit = runCatching { frame.hitTest(foot[0], foot[1]) }.getOrNull()?.firstOrNull { hr ->
                                 val y = hr.hitPose.ty(); val t = hr.trackable
-                                y < camPos.y - 0.7 && y > camPos.y - 2.4 && hypot(hr.hitPose.tx() - pp.ground.x, hr.hitPose.tz() - pp.ground.z) < 2.5 &&
+                                y < camPos.y - (FLOOR_MIN - 0.15) && y > camPos.y - (FLOOR_MAX + 0.3) && hypot(hr.hitPose.tx() - pp.ground.x, hr.hitPose.tz() - pp.ground.z) < 2.5 &&
                                     (floorHit(hr) || t is DepthPoint)
                             }
                             if (hit != null) {
@@ -649,28 +663,43 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(Modifier.fillMaxSize()) {
                 val sw = viewW / density.density; val sh = viewH / density.density
-                fun ax(px: Float, half: Float) = ((px / density.density) - half).coerceIn(8f, (sw - 2 * half - 8f).coerceAtLeast(8f)).dp
-                fun ay(px: Float, up: Float) = ((px / density.density) - up).coerceIn(TOP_CLEAR, (sh - 200f).coerceAtLeast(TOP_CLEAR)).dp
-                o?.turn?.takeIf { !mapMode && turnAround == null }?.let { p ->
-                    val st = navState; val step = route?.steps?.getOrNull(st?.stepIndex ?: -1)
-                    if (step != null) Column(Modifier.absoluteOffset(x = ax(p[0], 70f), y = ay(p[1], 64f)).width(140.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                // where each label wants to be (dp, top-left), then moved so none covers another: Poppy's bubble stays
+                // over her head; the turn and destination labels step up above it (or below it when there is no room)
+                class Lab(var x: Float, var y: Float, val wd: Float, val ht: Float)
+                fun ox(px: Float, half: Float) = ((px / density.density) - half).coerceIn(8f, (sw - 2 * half - 8f).coerceAtLeast(8f))
+                fun oy(px: Float, up: Float) = ((px / density.density) - up).coerceIn(TOP_CLEAR, (sh - 200f).coerceAtLeast(TOP_CLEAR))
+                val b = bubble; val head = o?.head
+                val bub = if (b != null && !mapMode && head != null) Lab(ox(head[0], 90f), oy(head[1], 62f), 180f, 62f) else null
+                val step = route?.steps?.getOrNull(navState?.stepIndex ?: -1)
+                val turnL = o?.turn?.takeIf { !mapMode && !mapOpen && turnAround == null && step != null }?.let { Lab(ox(it[0], 70f), oy(it[1], 74f), 140f, 74f) }
+                val destL = o?.dest?.takeIf { !mapMode && !mapOpen }?.let { Lab(ox(it[0], 60f), oy(it[1], 64f), 120f, 64f) }
+                fun hit(a: Lab, c: Lab) = a.x < c.x + c.wd + 6 && c.x < a.x + a.wd + 6 && a.y < c.y + c.ht + 6 && c.y < a.y + a.ht + 6
+                fun avoid(l: Lab?, others: List<Lab>) {
+                    if (l == null) return
+                    for (c in others) if (hit(l, c)) {
+                        val up = c.y - l.ht - 8
+                        l.y = if (up >= TOP_CLEAR) up else c.y + c.ht + 8
+                    }
+                }
+                avoid(turnL, listOfNotNull(bub)); avoid(destL, listOfNotNull(bub, turnL))
+                turnL?.let { l ->
+                    val st = navState!!
+                    Column(Modifier.absoluteOffset(x = l.x.dp, y = l.y.dp).width(140.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(Modifier.clip(RoundedCornerShape(14.dp)).background(Color.White).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TurnIcon(step, Ink, 22); Spacer(Modifier.width(6.dp)); Text(w.dist(st!!.toNext), color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                            TurnIcon(step!!, Ink, 22); Spacer(Modifier.width(6.dp)); Text(w.dist(st.toNext), color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
                         }
                         Box(Modifier.width(2.dp).height(40.dp).background(Color.White.copy(alpha = 0.9f)))
                     }
                 }
-                o?.dest?.takeIf { !mapMode }?.let { p ->
-                    Column(Modifier.absoluteOffset(x = ax(p[0], 60f), y = ay(p[1], 52f)).width(120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                destL?.let { l ->
+                    Column(Modifier.absoluteOffset(x = l.x.dp, y = l.y.dp).width(120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(dest.name, color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Amber).padding(horizontal = 10.dp, vertical = 5.dp))
                         Box(Modifier.width(2.dp).height(36.dp).background(Amber))
                     }
                 }
                 // Poppy's speech bubble over her head (centred on her, kept on screen)
-                val b = bubble
-                val head = o?.head
-                if (b != null && !mapMode && head != null) {
-                    Column(Modifier.absoluteOffset(x = ax(head[0], 90f), y = ay(head[1], 62f)).width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (bub != null && b != null) {
+                    Column(Modifier.absoluteOffset(x = bub.x.dp, y = bub.y.dp).width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(w.bubble(b), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center,
                             style = TextStyle(textDirection = if (w.he) TextDirection.Rtl else TextDirection.Ltr),
                             modifier = Modifier.widthIn(max = 180.dp).clip(RoundedCornerShape(18.dp)).background(Color.White).border(2.dp, if (gender == "boy") Color(0xFF63AEF0) else Color(0xFFF484BD), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
@@ -871,9 +900,9 @@ private fun FloorScan(w: Words, phase: Int, progress: Float, found: Boolean, mod
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(when { phase == 1 -> w.t("מצאתי את הרצפה!", "Floor found!"); found -> w.t("מצאתי! גע בעיגול", "Found it! Tap the ring"); else -> w.t("מחפש את הרצפה", "Finding the floor") },
+                Text(when { phase == 1 || found -> w.t("מצאתי את הרצפה!", "Floor found!"); else -> w.t("מחפש את הרצפה", "Finding the floor") },
                     color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(when { phase == 1 -> w.t("הסתכל קדימה על הרחוב לרגע", "Look ahead at the street for a moment"); found -> w.t("או המתן, זה ימשיך לבד", "or wait, it goes on by itself"); else -> w.t("כוון למדרכה והזז לאט, או גע ברצפה", "Aim at the sidewalk and move slowly, or tap the floor") },
+                Text(when { phase == 1 || found -> w.t("עכשיו הסתכל קדימה על הרחוב", "Now look ahead at the street"); else -> w.t("כוון את המצלמה למדרכה והזז לאט", "Aim the camera at the sidewalk and move it slowly") },
                     color = Color(0xFFCBD5E1), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(w.t("דלג", "Skip"), color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,

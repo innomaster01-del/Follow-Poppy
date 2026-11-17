@@ -17,9 +17,9 @@ data class Place(val name: String, val address: String, val at: LatLng, val alt:
 
 /** Thin client for the Mapbox walking directions and the place search (plain HTTPS + org.json, no SDK). */
 class MapboxApi(private val token: String, var language: String = "en") {
-    private fun get(url: String): JSONObject {
+    private fun get(url: String, fast: Boolean = false): JSONObject {
         val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 10_000; c.readTimeout = 15_000
+        if (fast) { c.connectTimeout = 4_000; c.readTimeout = 5_000 } else { c.connectTimeout = 10_000; c.readTimeout = 15_000 }
         try {
             val code = c.responseCode
             val body = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
@@ -58,14 +58,18 @@ class MapboxApi(private val token: String, var language: String = "en") {
      * abroad). Everything only inside a box around you and within [radiusM] (Mapbox otherwise fills up with far-away
      * matches); stops as soon as one way finds something close.
      */
-    fun nearby(categories: List<String>, queries: List<String>, near: LatLng, radiusM: Double = NEARBY_M): List<Place> {
+    fun nearby(categories: List<String>, queries: List<String>, near: LatLng, radiusM: Double = NEARBY_M, fast: Boolean = false): List<Place> {
         val box = bboxAround(near, radiusM * 1.25)
         fun close(l: List<Place>) = l.filter { Geo.distance(near, it.at) <= radiusM }
-        for (c in categories) {
+        // the category id that worked for this kind last time goes first; ids Mapbox did not know are skipped
+        val order = categories.sortedBy { if (it == worked[categories.first()]) 0 else 1 }.filter { it !in unknown }
+        for (c in order) {
+            var bad = false
             val found = close(runCatching {
-                parseSearchBox(get("https://api.mapbox.com/search/searchbox/v1/category/${URLEncoder.encode(c, "UTF-8")}?limit=25&language=$language&proximity=${near.lng},${near.lat}&bbox=$box&access_token=$token"))
-            }.getOrElse { emptyList() })
-            if (found.isNotEmpty()) return sortByDistance(found, near)
+                parseSearchBox(get("https://api.mapbox.com/search/searchbox/v1/category/${URLEncoder.encode(c, "UTF-8")}?limit=25&language=$language&proximity=${near.lng},${near.lat}&bbox=$box&access_token=$token", fast))
+            }.getOrElse { e -> if (e.message?.contains("HTTP 4") == true) bad = true; emptyList() })
+            if (bad) unknown.add(c)
+            if (found.isNotEmpty()) { worked[categories.first()] = c; return sortByDistance(found, near) }
         }
         for (q in queries) {
             val found = close(runCatching { searchBox(q, near, language, 10, box) }.getOrElse { emptyList() })
@@ -73,6 +77,9 @@ class MapboxApi(private val token: String, var language: String = "en") {
         }
         return emptyList()
     }
+
+    private val worked = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val unknown: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private fun searchBox(q: String, near: LatLng?, lang: String, limit: Int, bbox: String? = null): List<Place> {
         val prox = near?.let { "&proximity=${it.lng},${it.lat}" } ?: ""

@@ -33,6 +33,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -136,7 +142,7 @@ private class TileCache(private val max: Int = 70) {
  */
 @Composable
 internal fun RouteMap(w: Words, api: MapboxApi, route: Route?, along: Double, poppyAlong: Double, at: () -> LatLng?, heading: () -> Double,
-                      gender: String, modifier: Modifier = Modifier, startZoom: Double = 16.6, bottomInset: Float = 0f, topInset: Float = 0f) {
+                      gender: String, modifier: Modifier = Modifier, startZoom: Double = 16.6, bottomInset: Float = 0f, topInset: Float = 0f, centerY: Float = 0.55f, inDisc: Boolean = false) {
     val dens = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val cache = remember { TileCache() }
@@ -196,7 +202,7 @@ internal fun RouteMap(w: Words, api: MapboxApi, route: Route?, along: Double, po
             val z = zoom.roundToInt().coerceIn(1, 20)
             val s = Math.pow(2.0, zoom - z)                                    // logical units per tile unit
             val k = (s * dens).toFloat()
-            val cx = size.width / 2; val cy = topInset + (size.height - bottomInset - topInset) * 0.55f
+            val cx = size.width / 2; val cy = topInset + (size.height - bottomInset - topInset) * centerY
             val c = TileMath.world(vc, z)
             // tiles covering the turned view (a circle around the centre is enough)
             val r = hypot(max(cx, size.width - cx).toDouble(), max(cy, size.height - cy).toDouble()) / k
@@ -258,10 +264,10 @@ internal fun RouteMap(w: Words, api: MapboxApi, route: Route?, along: Double, po
                     drawPath(Path().apply { moveTo(me.x, me.y - 11f * u); lineTo(me.x + 8f * u, me.y + 8.5f * u); lineTo(me.x, me.y + 4f * u); lineTo(me.x - 8f * u, me.y + 8.5f * u); close() }, routeBlue)
                 }
             }
-            scaleBar(metrePx, dens, bottomInset)
+            if (!inDisc) scaleBar(metrePx, dens, bottomInset)
         }
         // back to following you
-        if (free != null) Box(Modifier.align(Alignment.TopEnd).padding(top = (topInset / dens).dp + 12.dp, end = 16.dp).size(44.dp).clip(CircleShape)
+        if (free != null) Box((if (inDisc) Modifier.align(Alignment.BottomCenter).padding(bottom = 70.dp) else Modifier.align(Alignment.TopEnd).padding(top = (topInset / dens).dp + 12.dp, end = 16.dp)).size(44.dp).clip(CircleShape)
             .background(Color.White).border(1.dp, Color(0x22000000), CircleShape).clickable { free = null; zoom = startZoom }, contentAlignment = Alignment.Center) {
             Canvas(Modifier.size(20.dp)) {
                 val s = size.width
@@ -284,44 +290,35 @@ private fun DrawScope.scaleBar(metrePx: Float, dens: Float, bottomInset: Float) 
     })
 }
 
-/** The top of the map sheet: one wide, gentle arc across the whole width (part of a big circle), straight below. */
-private class ArchShape(private val radiusOfWidth: Float = 1.05f) : Shape {
-    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
-        val w = size.width; val h = size.height; val r = w * radiusOfWidth
-        val a = Math.toDegrees(kotlin.math.acos((w / 2 / r).toDouble())).toFloat()       // the arc meets the sides at this angle
-        val edge = r - kotlin.math.sqrt(r * r - w * w / 4)
-        return Outline.Generic(Path().apply {
-            moveTo(0f, edge); arcTo(Rect(w / 2 - r, 0f, w / 2 + r, 2 * r), 180f + a, 180f - 2 * a, false)
-            lineTo(w, h); lineTo(0f, h); close()
-        })
-    }
-}
-
 /**
- * The map that comes up from the bottom with a tap, like a phone's live-view maps: a wide arc of map across the whole
- * screen, tipped back a little (as if lying on the ground in front of you), the street map filling it edge to edge.
- * Pinch and drag it; the button at the top closes it (or drag down).
+ * The map that comes up with a tap, like a phone's live-view maps: a round map lying on the ground in front of you
+ * (a disc seen in perspective), its rim fading softly into the camera picture, the street map filling it. It turns
+ * with you; pinch and drag it. The pill at the top closes it (tap, or drag it down).
  */
 @Composable
 internal fun MapSheet(w: Words, api: MapboxApi, route: Route?, along: Double, poppyAlong: Double, at: () -> LatLng?, heading: () -> Double,
                       gender: String, remaining: String, bottomInset: Float, onClose: () -> Unit) {
     var drag by remember { mutableFloatStateOf(0f) }
-    val shape: Shape = remember { ArchShape(1.05f) }
     val dens = LocalDensity.current.density
-    Box(
-        Modifier.fillMaxWidth().height(520.dp).graphicsLayer {
-            translationY = drag
-            rotationX = 14f; cameraDistance = 14f * density; transformOrigin = TransformOrigin(0.5f, 1f)   // tipped back
-        }.clip(shape).background(Color(0xFFEDEFF2))
-    ) {
-        RouteMap(w, api, route, along, poppyAlong, at, heading, gender, Modifier.fillMaxSize(), startZoom = 17.0, bottomInset = bottomInset, topInset = 40 * dens)
-        // a light rim along the arc
-        Canvas(Modifier.fillMaxSize()) {
-            val r = size.width * 1.05f; val a = Math.toDegrees(kotlin.math.acos((size.width / 2 / r).toDouble())).toFloat()
-            drawArc(Color(0x88FFFFFF), 180f + a, 180f - 2 * a, false, Offset(size.width / 2 - r, 0f), Size(2 * r, 2 * r), style = Stroke(3 * dens))
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(470.dp).graphicsLayer { translationY = drag }) {
+        val d = maxWidth * 1.12f
+        Box(
+            Modifier.align(Alignment.TopCenter).offset(y = 20.dp).requiredSize(d)
+                .graphicsLayer {
+                    rotationX = 50f; cameraDistance = 9f * density; transformOrigin = TransformOrigin(0.5f, 0.5f)   // lying on the ground
+                    compositingStrategy = CompositingStrategy.Offscreen
+                }
+                .drawWithContent {
+                    drawContent()
+                    // the rim fades into the camera picture
+                    drawRect(Brush.radialGradient(0f to Color.Black, 0.80f to Color.Black, 1f to Color.Transparent, center = center, radius = size.minDimension / 2), blendMode = BlendMode.DstIn)
+                }
+                .clip(CircleShape)
+        ) {
+            RouteMap(w, api, route, along, poppyAlong, at, heading, gender, Modifier.fillMaxSize(), startZoom = 17.2, centerY = 0.5f, inDisc = true)
         }
-        // close: a small pill at the top (drag it down, or tap)
-        Row(Modifier.align(Alignment.TopCenter).padding(top = 14.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF1A73E8))
+        // close: a small pill at the top (tap, or drag it down)
+        Row(Modifier.align(Alignment.TopCenter).padding(top = 6.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF1A73E8))
             .pointerInput(Unit) { detectVerticalDragGestures(onDragEnd = { if (drag > 120f) onClose(); drag = 0f }, onDragCancel = { drag = 0f }) { _, dy -> drag = (drag + dy).coerceAtLeast(0f) } }
             .clickable { onClose() }.padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Canvas(Modifier.size(14.dp)) {                                     // a check mark

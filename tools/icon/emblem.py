@@ -5,7 +5,6 @@ import sys, math, os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageFont
 
-out, fonts = sys.argv[1], sys.argv[2]
 K = 4; PINK, BLUE = (255, 127, 191), (95, 179, 255)
 
 def paw_mask(W, H, cx, cy, s):
@@ -17,7 +16,7 @@ def paw_mask(W, H, cx, cy, s):
 
 def shift(m, dx, dy): return ImageChops.offset(m, int(dx), int(dy))
 
-def emblem(size=600):
+def emblem(size=600, shadow=True):
     W = H = size * K; px, py, pr = W / 2, H * 0.58, W * 0.25
     im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     # silhouette: ears + round head + point
@@ -30,8 +29,9 @@ def emblem(size=600):
     d = ImageDraw.Draw(body); d.ellipse((px - pr, py - pr, px + pr, py + pr), fill=255)
     a = math.radians(42); d.polygon([(px - pr * math.cos(a), py + pr * math.sin(a)), (px + pr * math.cos(a), py + pr * math.sin(a)), (px, py + pr * 1.7)], fill=255)
     # soft drop shadow
-    sh = body.filter(ImageFilter.GaussianBlur(pr * 0.12)).point(lambda v: int(v * 0.45))
-    im.paste((10, 6, 30, 255), (0, int(pr * 0.08)), sh)
+    if shadow:
+        sh = body.filter(ImageFilter.GaussianBlur(pr * 0.12)).point(lambda v: int(v * 0.45))
+        im.paste((10, 6, 30, 255), (0, int(pr * 0.08)), sh)
     # the pin: white, a touch of grey towards the lower right (light from the top left)
     yy, xx = np.mgrid[0:H, 0:W]; t = np.clip(((xx - (px - pr)) + (yy - (py - pr))) / (4 * pr), 0, 1)
     shade = np.zeros((H, W, 4), np.uint8); c = (255 - 30 * t ** 1.5); shade[..., 0] = c; shade[..., 1] = c; shade[..., 2] = (c + 4 * t).clip(0, 255); shade[..., 3] = 255
@@ -61,20 +61,22 @@ def gradient_text(text, font, c0, c1):
     arr[..., :3] = (np.array(c0) + (np.array(c1) - np.array(c0)) * t).astype(np.uint8); arr[..., 3] = np.asarray(m)
     return Image.fromarray(arr, 'RGBA')
 
-em = emblem(); em.save(os.path.join(out, 'emblem.png'))
-bold = ImageFont.truetype(os.path.join(fonts, 'Poppins-Bold.ttf'), 150)
-word = gradient_text('Poppy', bold, PINK, BLUE)
-# with the name beside it
-e2 = em.resize((int(em.width * 300 / em.height), 300), Image.LANCZOS)
-row = Image.new('RGBA', (e2.width + 40 + word.width, 300), (0, 0, 0, 0)); row.alpha_composite(e2, (0, 0)); row.alpha_composite(word, (e2.width + 40, 300 - word.height - 40))
-row.save(os.path.join(out, 'emblem_name.png'))
-# stacked: emblem over the name
-e3 = em.resize((int(em.width * 320 / em.height), 320), Image.LANCZOS); w3 = max(e3.width, word.width)
-col = Image.new('RGBA', (w3, 320 + 20 + word.height), (0, 0, 0, 0)); col.alpha_composite(e3, ((w3 - e3.width) // 2, 0)); col.alpha_composite(word, ((w3 - word.width) // 2, 340))
-col.save(os.path.join(out, 'emblem_stacked.png'))
-prev = Image.new('RGBA', (1400, 520), (7, 11, 20, 255))
-prev.alpha_composite(em.resize((int(em.width * 420 / em.height), 420), Image.LANCZOS), (40, 50))
-prev.alpha_composite(row.resize((int(row.width * 0.75), int(row.height * 0.75)), Image.LANCZOS), (380, 60))
-prev.alpha_composite(col.resize((int(col.width * 0.62), int(col.height * 0.62)), Image.LANCZOS), (1000, 120))
-prev.convert('RGB').save(os.path.join(out, 'emblem_preview.png'))
-big = Image.new('RGBA', (700, 760), (7, 11, 20, 255)); big.alpha_composite(em.resize((int(em.width * 700 / em.height), 700), Image.LANCZOS), (int(350 - em.width * 700 / em.height / 2), 30)); big.convert('RGB').save(os.path.join(out, 'emblem_big.png'))
+if __name__ == '__main__':
+    out, fonts = sys.argv[1], sys.argv[2]
+    em = emblem(); em.save(os.path.join(out, 'emblem.png'))
+    bold = ImageFont.truetype(os.path.join(fonts, 'Poppins-Bold.ttf'), 150)
+    word = gradient_text('Poppy', bold, PINK, BLUE)
+    # with the name beside it
+    e2 = em.resize((int(em.width * 300 / em.height), 300), Image.LANCZOS)
+    row = Image.new('RGBA', (e2.width + 40 + word.width, 300), (0, 0, 0, 0)); row.alpha_composite(e2, (0, 0)); row.alpha_composite(word, (e2.width + 40, 300 - word.height - 40))
+    row.save(os.path.join(out, 'emblem_name.png'))
+    # stacked: emblem over the name
+    e3 = em.resize((int(em.width * 320 / em.height), 320), Image.LANCZOS); w3 = max(e3.width, word.width)
+    col = Image.new('RGBA', (w3, 320 + 20 + word.height), (0, 0, 0, 0)); col.alpha_composite(e3, ((w3 - e3.width) // 2, 0)); col.alpha_composite(word, ((w3 - word.width) // 2, 340))
+    col.save(os.path.join(out, 'emblem_stacked.png'))
+    prev = Image.new('RGBA', (1400, 520), (7, 11, 20, 255))
+    prev.alpha_composite(em.resize((int(em.width * 420 / em.height), 420), Image.LANCZOS), (40, 50))
+    prev.alpha_composite(row.resize((int(row.width * 0.75), int(row.height * 0.75)), Image.LANCZOS), (380, 60))
+    prev.alpha_composite(col.resize((int(col.width * 0.62), int(col.height * 0.62)), Image.LANCZOS), (1000, 120))
+    prev.convert('RGB').save(os.path.join(out, 'emblem_preview.png'))
+    big = Image.new('RGBA', (700, 760), (7, 11, 20, 255)); big.alpha_composite(em.resize((int(em.width * 700 / em.height), 700), Image.LANCZOS), (int(350 - em.width * 700 / em.height / 2), 30)); big.convert('RGB').save(os.path.join(out, 'emblem_big.png'))

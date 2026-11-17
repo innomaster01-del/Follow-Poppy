@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
@@ -92,6 +93,8 @@ internal const val FAR_M = 5000.0
  * search by (local and English, so it works abroad too) when no category id finds anything nearby.
  */
 internal class Kind(val id: String, val he: String, val en: String, val cats: List<String>, val queries: List<String>)
+/** The kinds shown by themselves under "around you" (all of them stay one tap away as buttons). */
+internal val AROUND_KINDS = setOf("coffee", "restaurant", "supermarket", "pharmacy", "atm", "bakery")
 internal val KINDS = listOf(
     Kind("coffee", "קפה", "Coffee", listOf("coffee", "cafe"), listOf("בית קפה", "coffee")),
     Kind("restaurant", "אוכל", "Food", listOf("restaurant", "fast_food"), listOf("מסעדה", "restaurant")),
@@ -139,21 +142,33 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
     var around by remember { mutableStateOf<List<Pair<Kind, Place>>?>(null) }
     // the place the tiles were made for: only an accurate fix (±60 m), refreshed when you have moved about 300 m
     var aroundAt by remember { mutableStateOf<LatLng?>(null) }
+    var aroundPrecise by remember { mutableStateOf(false) }
+    var aroundBusy by remember { mutableStateOf(false) }
     val openedAt = remember { System.currentTimeMillis() }
     LaunchedEffect(here, acc) {
         val h = here ?: return@LaunchedEffect
-        // a rough fix only if nothing better came within 12 s (better a near guess than an empty screen)
-        if ((acc ?: 999) > 60 && (aroundAt != null || System.currentTimeMillis() - openedAt < 12_000)) return@LaunchedEffect
+        // at once with the first fix (no waiting); again once when a precise fix comes, or after you moved ~300 m
+        val precise = (acc ?: 999) <= 60
         val a = aroundAt
-        if (a == null || Geo.distance(a, h) > 300) aroundAt = h
+        if (a == null || Geo.distance(a, h) > 300 || (precise && !aroundPrecise && Geo.distance(a, h) > 40)) { aroundAt = h; aroundPrecise = precise }
+        else if (precise) aroundPrecise = true
     }
     LaunchedEffect(aroundAt, w.he) {
         val h = aroundAt ?: return@LaunchedEffect
-        around = null
-        around = withContext(Dispatchers.IO) {
-            KINDS.map { k -> async { runCatching { api.nearby(k.cats, k.queries, h, 1500.0).take(2).map { k to it } }.getOrElse { emptyList() } } }.awaitAll().flatten()
-                .distinctBy { it.second.id.ifEmpty { it.second.name } }.sortedBy { Geo.distance(h, it.second.at) }.take(10)
+        // each kind shows up as soon as it is found (no waiting for the slowest); the main everyday kinds only
+        aroundBusy = true
+        var got = emptyList<Pair<Kind, Place>>()
+        around = if (around.isNullOrEmpty()) null else around
+        coroutineScope {
+            KINDS.filter { it.id in AROUND_KINDS }.forEach { k ->
+                launch {
+                    val r = withContext(Dispatchers.IO) { runCatching { api.nearby(k.cats, k.queries, h, 1500.0, fast = true).take(2).map { k to it } }.getOrElse { emptyList() } }
+                    got = (got + r).distinctBy { it.second.id.ifEmpty { it.second.name } }.sortedBy { Geo.distance(h, it.second.at) }.take(10)
+                    if (got.isNotEmpty()) around = got
+                }
+            }
         }
+        around = got; aroundBusy = false
     }
     fun search() {
         if (q.isBlank()) return
@@ -268,7 +283,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
                 Text(w.t("סביבך עכשיו", "Around you now"), color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, bottom = 10.dp))
                 val list = around
                 LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (list == null) items(6) { PlaceTileLoading() }
+                    if (list == null || (list.isEmpty() && aroundBusy)) items(6) { PlaceTileLoading() }
                     else if (list.isEmpty()) item(span = { GridItemSpan(2) }) { Text(w.t("לא מצאתי מקומות קרובים כרגע", "No places found nearby right now"), color = Text3, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                     else items(list) { (k, p) -> PlaceTile(w, k, p, here, accent) { pick(p) } }
                 }
