@@ -1,0 +1,24 @@
+name: Image to 3D
+on:
+  push: { branches: [gen3d] }
+permissions: { contents: write }
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Generate
+        env: { HF_TOKEN: '${{ secrets.HF_TOKEN }}' }
+        run: |
+          pip install -q gradio_client
+          python tools/3d/gen/trellis.py tools/3d/gen/in gen-out || echo "generation failed" >> gen-out/log.txt
+      - name: Publish
+        if: always()
+        run: |
+          mkdir -p gen-out; OUT=$(mktemp -d); cp -r gen-out/* $OUT/ 2>/dev/null || true
+          cd $OUT && git init -q && git checkout -q -b gen3d-output && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "gen ${{ github.run_number }}" || exit 0
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" gen3d-output
