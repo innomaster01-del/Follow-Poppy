@@ -1,5 +1,7 @@
 <resources>
+    <!-- the app's own night colour from the first frame, so the opening animation follows on without a flash -->
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">@color/night</item>
     </style>
+    <color name="night">#070B14</color>
 </resources>

@@ -308,9 +308,14 @@ class MoneyTest {
         assertEquals(listOf("USD" to "ILS", "EUR" to "ILS"), Money.pairs("ILS", null))
         assertEquals(listOf("USD" to "THB"), Money.pairs("USD", "THB"))                      // no pair twice
     }
-    @Test fun whereToSeeAChangersRate() {
-        assertTrue(Money.ratesPage(Place("SuperRich Thailand", "Ratchadamri", LatLng(13.75, 100.54))).startsWith("https://www.superrichthailand.com"))
-        val other = Money.ratesPage(Place("Vasu Exchange", "Sukhumvit", LatLng(13.74, 100.55)))
-        assertTrue(other.startsWith("https://www.google.com/search?q=") && "Vasu" in other)
+    @Test fun theBoardAgainstTheMarket() {
+        assertEquals(0, Money.judge(32.0, 32.4).second)                                   // 1.2% under: good
+        assertEquals(1, Money.judge(31.3, 32.4).second)                                   // 3.4% under: fair
+        assertEquals(2, Money.judge(30.5, 32.4).second)                                   // 5.9% under: expensive
+        assertEquals(0, Money.judge(32.6, 32.4).second)                                   // over the market: good
+        assertEquals(-0.0123, Money.judge(32.0, 32.4).first, 1e-3)
+        val m = Money.Market("ILS", "THB", mapOf(("ILS" to "THB") to 8.9, ("USD" to "THB") to 32.4, ("EUR" to "THB") to 35.1))
+        assertEquals(listOf("ILS" to "THB", "USD" to "THB"), m.main)
+        assertEquals(listOf("USD" to "THB", "EUR" to "THB"), m.board)
     }
 }

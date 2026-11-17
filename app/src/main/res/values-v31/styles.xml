@@ -1,0 +1,10 @@
+<resources>
+    <!-- Android 12+ shows its own launch screen (the home-screen icon in a circle) before the app draws. Ours is the
+         opening animation, so the system one is just the night colour with nothing on it. -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/night</item>
+        <item name="android:windowSplashScreenBackground">@color/night</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/night</item>
+    </style>
+</resources>

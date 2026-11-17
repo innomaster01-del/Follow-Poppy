@@ -67,6 +67,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -128,7 +129,6 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val logo by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null) {
         value = withContext(Dispatchers.IO) { runCatching { ctx.assets.open("splash_logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }?.asImageBitmap() }.getOrNull() }
     }
@@ -136,6 +136,13 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
     var acc by remember { mutableStateOf<Int?>(null) }
     var far by remember { mutableStateOf<Place?>(null) }
     var kind by remember { mutableStateOf<Kind?>(null) }
+    var changer by remember { mutableStateOf<Place?>(null) }                 // the money changer whose rate check is open
+    // today's market rates where you are (only while looking at money changers; once per area)
+    val moneyKey = if (kind?.id == "exchange") here?.let { "%.1f,%.1f".format(java.util.Locale.US, it.lat, it.lng) } else null
+    val market by produceState<Money.Market?>(null, moneyKey) {
+        val h = here; if (moneyKey == null || h == null) return@produceState
+        value = withContext(Dispatchers.IO) { runCatching { Money.market(ctx, h) }.getOrNull() }
+    }
     val accent = if (poppy == "boy") PoppyBlue else PoppyPink
     val accentAnim by animateColorAsState(accent, label = "accent")
     LaunchedEffect(Unit) { while (true) { here = sensors.location?.let { LatLng(it.latitude, it.longitude) }; acc = sensors.location?.accuracy?.roundToInt(); delay(1000) } }
@@ -277,7 +284,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
             kind?.let { k -> Text(w.t("קרוב אליך", "Near you") + " · " + w.t(k.he, k.en), color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
             error?.let { Text(it, color = Warm, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
             // changing money: today's market rate to compare with the changer's board, and a quick converter
-            if (kind?.id == "exchange") here?.let { RatesCard(w, it) }
+            if (kind?.id == "exchange" && here != null) RatesCard(w, market)
             // nothing typed and no kind chosen: what is around you; typing or a search replaces it with the results
             val browsing = q.isBlank() && kind == null
             if (browsing) {
@@ -306,7 +313,7 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
                                 if (kind?.id == "exchange") {
                                     Spacer(Modifier.width(8.dp))
                                     Text(w.t("השער שלהם", "Their rate"), color = Night, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.clip(CircleShape).background(Text1).clickable { runCatching { uri.openUri(Money.ratesPage(p)) } }.padding(horizontal = 10.dp, vertical = 6.dp))
+                                        modifier = Modifier.clip(CircleShape).background(Text1).clickable { changer = p }.padding(horizontal = 10.dp, vertical = 6.dp))
                                 }
                                 dist?.let {
                                     Spacer(Modifier.width(10.dp))
@@ -323,6 +330,8 @@ internal fun SearchScreen(w: Words, api: MapboxApi, sensors: WalkSensors, poppy:
             } else Spacer(Modifier.weight(1f))
             Text(w.t("הליכה בלבד. כשחוצים כביש, מרימים את הראש מהמסך.", "Walking only. Look up from the screen when you cross a street."), color = Text3, fontSize = 12.sp, modifier = Modifier.padding(vertical = 14.dp))
         }
+        // a money changer: is its rate good? (today's market rate, and the number on its board)
+        changer?.let { p -> ChangerSheet(w, p, here?.let { Geo.distance(it, p.at) }, market, onGo = { changer = null; pick(p) }) { changer = null } }
         // far away: ask before starting a walk of hours
         far?.let { p ->
             val dm = here?.let { Geo.distance(it, p.at) } ?: 0.0
@@ -369,55 +378,107 @@ private fun PlaceTileLoading() {
     }
 }
 
+private fun num(x: Double) = when { x >= 100 -> "%,.0f".format(java.util.Locale.US, x); x >= 10 -> "%.2f".format(java.util.Locale.US, x); else -> "%.3f".format(java.util.Locale.US, x) }
+private val LtrStyle = androidx.compose.ui.text.TextStyle(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)
+
 /**
- * Today's market rate where you are (the currencies that matter here: abroad yours and dollars into the local one, at
- * home dollars and euros into yours), what a fair changer should give, and a converter for the first pair.
+ * Today's market rate where you are (abroad: yours and dollars into the local currency; at home: dollars and euros),
+ * what a fair changer should give, and a converter for the first pair.
  */
 @Composable
-private fun RatesCard(w: Words, here: LatLng) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    // fetched once per area (rounded position) - not on every small move
-    val key = "${"%.1f".format(java.util.Locale.US, here.lat)},${"%.1f".format(java.util.Locale.US, here.lng)}"
-    val data by produceState<Pair<List<Triple<String, String, Double>>, Boolean>?>(null, key) {
-        value = withContext(Dispatchers.IO) {
-            val home = Money.homeCurrency(); val local = Money.localCurrency(ctx, here)
-            val pairs = Money.pairs(home, local)
-            val got = pairs.groupBy { it.first }.flatMap { (from, ps) ->
-                val r = Money.rates(from, ps.map { it.second }.toSet()); ps.mapNotNull { (f, t) -> r[t]?.let { Triple(f, t, it) } }
-            }
-            got to (got.isEmpty())
-        }
-    }
+private fun RatesCard(w: Words, m: Money.Market?) {
     var amount by remember { mutableStateOf("100") }
     Column(Modifier.fillMaxWidth().padding(bottom = 12.dp).glass(RoundedCornerShape(22.dp), 0.9f).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(w.t("שער השוק היום", "Today's market rate"), color = Text2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        val d = data
+        val rows = m?.main.orEmpty()
         when {
-            d == null -> Text(w.t("בודק שערים…", "Checking rates…"), color = Text3, fontSize = 14.sp)
-            d.second -> Text(w.t("אין חיבור לשערים כרגע", "Rates are not available right now"), color = Text3, fontSize = 14.sp)
+            m == null -> Text(w.t("בודק שערים…", "Checking rates…"), color = Text3, fontSize = 14.sp)
+            rows.isEmpty() -> Text(w.t("אין חיבור לשערים כרגע", "Rates are not available right now"), color = Text3, fontSize = 14.sp)
             else -> {
-                fun num(x: Double) = if (x >= 100) "%,.0f".format(java.util.Locale.US, x) else if (x >= 10) "%.2f".format(java.util.Locale.US, x) else "%.3f".format(java.util.Locale.US, x)
-                for ((f, t, r) in d.first) {
+                for ((f, t) in rows) {
+                    val r = m.rate.getValue(f to t)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("1 ${Money.sign(f)} = ${num(r)} ${Money.sign(t)}", color = Text1, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
-                            style = androidx.compose.ui.text.TextStyle(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
-                        // a fair changer gives at least ~98% of the market rate; under ~96% is expensive
-                        Text(w.t("טוב: ${num(r * 0.98)}+", "Good: ${num(r * 0.98)}+"), color = Color(0xFF4ADE80), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("1 ${Money.sign(f)} = ${num(r)} ${Money.sign(t)}", color = Text1, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), style = LtrStyle)
+                        Text(w.t("הוגן: ${num(r * 0.98)}+", "Fair: ${num(r * 0.98)}+"), color = Color(0xFF4ADE80), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                val (f, t, r) = d.first.first()
+                val (f, t) = rows.first(); val r = m.rate.getValue(f to t)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    androidx.compose.foundation.text.BasicTextField(amount, { v -> amount = v.filter { it.isDigit() || it == '.' }.take(9) },
-                        singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Text1),
-                        modifier = Modifier.width(110.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.08f)).padding(horizontal = 12.dp, vertical = 8.dp))
-                    Text("${Money.sign(f)}  →  ${amount.toDoubleOrNull()?.let { num(it * r) } ?: "—"} ${Money.sign(t)}", color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                        style = androidx.compose.ui.text.TextStyle(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+                    NumberField(amount, { amount = it }, Modifier.width(110.dp))
+                    Text("${Money.sign(f)}  →  ${amount.toDoubleOrNull()?.let { num(it * r) } ?: "—"} ${Money.sign(t)}", color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, style = LtrStyle)
                 }
-                Text(w.t("השווה לשער על הלוח של הצ'יינג'. \"השער שלהם\" ליד כל מקום מראה את השער שהוא מפרסם.", "Compare with the changer's board. \"Their rate\" next to each place shows the rate it publishes."),
-                    color = Text3, fontSize = 12.sp)
+                Text(w.t("ליד כל צ'יינג' יש \"השער שלהם\": מקלידים את המספר מהלוח שלהם ופופי אומרת אם זה משתלם.", "Next to each changer, \"Their rate\": type the number on their board and Poppy tells you if it is worth it."), color = Text3, fontSize = 12.sp)
             }
+        }
+    }
+}
+
+@Composable
+private fun NumberField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.text.BasicTextField(value, { v -> onChange(v.filter { it.isDigit() || it == '.' }.take(9)) },
+        singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(Text1),
+        modifier = modifier.clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.08f)).padding(horizontal = 12.dp, vertical = 9.dp))
+}
+
+/**
+ * The small window for one money changer: today's market rate for dollars and euros into the local currency (what a
+ * fair changer should give, said plainly to be the market's, not the changer's), and a field for the number on its
+ * board: Poppy says at once whether it is good, fair or expensive, and what that means on 100.
+ */
+@Composable
+private fun ChangerSheet(w: Words, p: Place, dist: Double?, m: Money.Market?, onGo: () -> Unit, onClose: () -> Unit) {
+    var cur by remember { mutableStateOf("USD") }
+    var board by remember { mutableStateOf("") }
+    Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { onClose() }, contentAlignment = Alignment.BottomCenter) {
+        Column(Modifier.fillMaxWidth().padding(12.dp).darkGlass(RoundedCornerShape(28.dp)).clickable(enabled = false) {}.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(p.name, color = Text1, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    dist?.let { Text(w.dist(it) + " · " + w.mins(it * 1.3 / 1.35), color = Text3, fontSize = 13.sp) }
+                }
+                Text("✕", color = Text2, fontSize = 18.sp, modifier = Modifier.clip(CircleShape).clickable { onClose() }.padding(8.dp))
+            }
+            val rows = m?.board.orEmpty()
+            if (m == null) Text(w.t("בודק שערים…", "Checking rates…"), color = Text3, fontSize = 14.sp)
+            else if (rows.isEmpty()) Text(w.t("אין חיבור לשערים כרגע", "Rates are not available right now"), color = Text3, fontSize = 14.sp)
+            else {
+                // dollars and euros: the market rate and where a fair rate starts
+                for ((f, t) in rows) {
+                    val r = m.rate.getValue(f to t)
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (cur == f) Color.White.copy(alpha = 0.10f) else Color.Transparent)
+                        .clickable { cur = f }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("1 ${Money.sign(f)} = ${num(r)} ${Money.sign(t)}", color = Text1, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), style = LtrStyle)
+                        Text(w.t("הוגן מ-${num(r * 0.98)}", "Fair from ${num(r * 0.98)}"), color = Color(0xFF4ADE80), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (rows.none { it.first == cur }) cur = rows.first().first
+                val local = m.local; val market = m.rate.getValue(cur to local)
+                Text(w.t("מה כתוב על הלוח שלהם ל-1 ${Money.sign(cur)}?", "What does their board say for 1 ${Money.sign(cur)}?"), color = Text2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    NumberField(board, { board = it }, Modifier.width(130.dp))
+                    Text(Money.sign(local), color = Text1, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                }
+                board.toDoubleOrNull()?.takeIf { it > 0 }?.let { b ->
+                    val (d, v) = Money.judge(b, market)
+                    val (label, color) = when (v) {
+                        0 -> w.t("שער טוב, אפשר להחליף כאן", "A good rate, change here") to Color(0xFF4ADE80)
+                        1 -> w.t("סביר", "Fair") to Color(0xFFF5B841)
+                        else -> w.t("יקר, כדאי לבדוק את הצ'יינג' הבא", "Expensive, try the next changer") to Color(0xFFFF6B6B)
+                    }
+                    val per100 = (b - market) * 100
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(color.copy(alpha = 0.14f)).padding(12.dp)) {
+                        Text(label, color = color, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(w.t("${"%+.1f".format(java.util.Locale.US, d * 100)}% משער השוק · על 100 ${Money.sign(cur)}: ${num(b * 100)} ${Money.sign(local)} (${if (per100 >= 0) "+" else "−"}${num(kotlin.math.abs(per100))})",
+                            "${"%+.1f".format(java.util.Locale.US, d * 100)}% vs market · for 100 ${Money.sign(cur)}: ${num(b * 100)} ${Money.sign(local)} (${if (per100 >= 0) "+" else "−"}${num(kotlin.math.abs(per100))})"),
+                            color = Text2, fontSize = 13.sp)
+                    }
+                }
+                Text(w.t("לפי שער השוק של היום. צ'יינג'ים לא מפרסמים את השער שלהם, הוא כתוב רק על הלוח.", "From today's market rate. Changers do not publish their rates; it is only on their board."), color = Text3, fontSize = 11.sp)
+            }
+            Text(w.t("לך לשם עם פופי", "Walk there with Poppy"), color = Night, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clip(CircleShape).background(Text1).clickable { onGo() }.padding(vertical = 12.dp))
         }
     }
 }
