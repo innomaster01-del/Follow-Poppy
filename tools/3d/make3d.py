@@ -74,7 +74,16 @@ for n in names:
                 elif pn == 'randomize_seed': kw[pn] = False
                 elif pn == 'seed': kw[pn] = 1234
             say(n, space, ep, 'textured' if textured else 'shape only')
-            res = c.predict(api_name=ep, **kw)
+            # the free GPU time refills over time: when it says "try again in m:ss" (a few minutes), wait and try again
+            import re, time
+            for attempt in range(6):
+                try:
+                    res = c.predict(api_name=ep, **kw); break
+                except Exception as e:
+                    m = re.search(r'Try again in (\d+):(\d+):(\d+)', str(e))
+                    wait = int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) if m else None
+                    if wait is None or wait > 15 * 60 or attempt == 5: raise
+                    say(f'  out of GPU time, waiting {wait + 20} s'); time.sleep(wait + 20)
             say('  result:', str(res)[:400])
             save(res, n, ('tex' if textured else 'shape'))
         except Exception as e:
