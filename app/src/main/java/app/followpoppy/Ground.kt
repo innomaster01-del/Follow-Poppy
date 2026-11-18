@@ -47,6 +47,7 @@ class SidewalkSnap {
         e += (we - e) * gain; n += (wn - n) * gain
     }
     fun apply(p: Enu) = Enu(p.e + e, p.n + n)
+    fun reset() { e = 0.0; n = 0.0 }
     companion object { const val MAX = 18.0 }
 }
 

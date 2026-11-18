@@ -55,8 +55,16 @@ class WalkGeoTest {
     @Test fun navigatorDetectsLeavingTheRoute() {
         val r = lRoute(); val n = Navigator(r)
         val off = Geo.fromEnu(r.line.origin, Enu(-60.0, 40.0))
-        val got = (0..12).flatMap { n.update(off, 5.0, it.toDouble()) }.map { it.first }
+        n.update(Geo.fromEnu(r.line.origin, r.line.at(5.0)), 5.0, 0.0)                     // on the route first
+        val got = (1..13).flatMap { n.update(off, 5.0, it.toDouble()) }.map { it.first }
         assertTrue(Navigator.Cue.OFF_ROUTE in got)
+    }
+    @Test fun startingAwayFromTheRouteIsNotOffRoute() {
+        val r = lRoute(); val n = Navigator(r)
+        val home = Geo.fromEnu(r.line.origin, Enu(-60.0, 40.0))                           // at home, the route is over there
+        val got = (0..20).flatMap { n.update(home, 5.0, it.toDouble()) }.map { it.first }
+        assertFalse(Navigator.Cue.OFF_ROUTE in got); assertFalse(n.joined)
+        n.update(Geo.fromEnu(r.line.origin, r.line.at(3.0)), 5.0, 21.0); assertTrue(n.joined)
     }
     @Test fun parsesMapboxDirections() {
         val geo = Geo.encodePolyline(listOf(LatLng(32.0, 34.8), LatLng(32.0009, 34.8), LatLng(32.0009, 34.801)))
@@ -352,5 +360,56 @@ class SurfaceTest {
         assertEquals(SurfaceConfidence.State.LOST, run(3000, true, 3000, 0, 9.0, offset = 40.0))
         assertNotEquals(SurfaceConfidence.State.BROKEN, run(300, false, 0, 0, 0.0))
         assertEquals(SurfaceConfidence.State.BROKEN, run(400, false, 0, 0, 0.0))
+    }
+}
+
+class SidewalkTest {
+    private val o = LatLng(32.08, 34.78)
+    private fun ll(e: Double, n: Double) = Geo.fromEnu(o, Enu(e, n))
+    // north 100 m then east 100 m (a right turn) on a street; sidewalks 6 m either side
+    private val mid get() = Polyline(o, listOf(ll(0.0, 0.0), ll(0.0, 100.0), ll(100.0, 100.0)))
+    private val road = StreetData.Way("street", listOf(Enu(0.0, -20.0), Enu(0.0, 100.0), Enu(120.0, 100.0)))
+    private val swE = StreetData.Way("sidewalk", listOf(Enu(6.0, -20.0), Enu(6.0, 94.0), Enu(120.0, 94.0)))
+    private val swW = StreetData.Way("sidewalk", listOf(Enu(-6.0, -20.0), Enu(-6.0, 106.0), Enu(120.0, 106.0)))
+
+    @Test fun trailGoesOnTheMapsSidewalkWithRealCorners() {
+        val plan = SidewalkPlan.build(mid, StreetData(listOf(swE, swW), listOf(swE, swW), listOf(road), emptyList()))
+        assertTrue(plan.mapped(-1) > 0.85)
+        val right = WalkLine(mid, plan.lateral(-1))
+        val p = right.line.at(right.toWalk(50.0)); assertEquals(6.0, p.e, 0.2); assertEquals(50.0, p.n, 0.5)
+        assertTrue(right.line.pts.any { Math.hypot(it.e - 6, it.n - 94) < 0.3 })          // inside corner
+        val q = right.line.at(right.toWalk(150.0)); assertEquals(94.0, q.n, 0.2)
+        assertEquals(150.0, right.toMiddle(right.toWalk(150.0)), 1e-6)
+        val left = WalkLine(mid, plan.lateral(1))
+        assertTrue(left.line.pts.any { Math.hypot(it.e + 6, it.n - 106) < 0.3 })         // outside corner, over the crossing
+    }
+    @Test fun withoutMappedSidewalksBesideTheRoadButNotInABuilding() {
+        val bld = listOf(Enu(5.0, 20.0), Enu(15.0, 20.0), Enu(15.0, 40.0), Enu(5.0, 40.0), Enu(5.0, 20.0))
+        val plan = SidewalkPlan.build(mid, StreetData(emptyList(), emptyList(), listOf(road), listOf(bld)))
+        assertEquals(6.0, plan.right[5], 0.01); assertEquals(1, plan.rightHow[5])
+        assertTrue(plan.right[15] < 5.0 && plan.right[15] > 4.0)
+    }
+    @Test fun aRouteOnAFootpathStaysOnIt() {
+        val path = StreetData.Way("footway", listOf(Enu(0.0, -10.0), Enu(0.0, 100.0), Enu(110.0, 100.0)))
+        val plan = SidewalkPlan.build(mid, StreetData(listOf(path), listOf(path), emptyList(), emptyList()))
+        assertTrue(plan.walkShare() > 0.95)
+        assertEquals(mid.length, WalkLine(mid, plan.lateral(-1)).line.length, 0.01)
+    }
+    @Test fun readsVectorTiles() {
+        fun vint(o: java.io.ByteArrayOutputStream, v0: Long) { var v = v0; while (true) { if (v and 0x7fL.inv() == 0L) { o.write(v.toInt()); return }; o.write(((v and 0x7f) or 0x80).toInt()); v = v ushr 7 } }
+        fun field(o: java.io.ByteArrayOutputStream, f: Int, b: ByteArray) { vint(o, ((f shl 3) or 2).toLong()); vint(o, b.size.toLong()); o.write(b) }
+        fun packed(xs: List<Int>) = java.io.ByteArrayOutputStream().also { o -> xs.forEach { vint(o, it.toLong() and 0xffffffffL) } }.toByteArray()
+        fun zz(n: Int) = (n shl 1) xor (n shr 31)
+        fun bytes(f: (java.io.ByteArrayOutputStream) -> Unit) = java.io.ByteArrayOutputStream().also(f).toByteArray()
+        val feat = bytes { field(it, 2, packed(listOf(0, 0, 1, 1))); vint(it, 24); vint(it, 2); field(it, 4, packed(listOf(9, zz(0), zz(0), 10, zz(2048), zz(4096)))) }
+        val layer = bytes { field(it, 1, "road".toByteArray()); field(it, 2, feat); field(it, 3, "class".toByteArray()); field(it, 3, "type".toByteArray())
+            field(it, 4, bytes { v -> field(v, 1, "path".toByteArray()) }); field(it, 4, bytes { v -> field(v, 1, "sidewalk".toByteArray()) }); vint(it, 40); vint(it, 4096) }
+        val tile = bytes { field(it, 3, layer) }
+        val gz = bytes { java.util.zip.GZIPOutputStream(it).use { g -> g.write(tile) } }
+        val f = Mvt.decode(gz, setOf("road")).single()
+        assertEquals("sidewalk", f.props["type"]); assertEquals(2, f.type)
+        assertEquals(0.5, f.parts[0][1][0], 1e-9); assertEquals(1.0, f.parts[0][1][1], 1e-9)
+        val t = Mvt.tileOf(LatLng(32.08, 34.78), 16)
+        assertTrue(Geo.distance(Mvt.place(16, t[0], t[1], 0.5, 0.5), LatLng(32.08, 34.78)) < 400)
     }
 }

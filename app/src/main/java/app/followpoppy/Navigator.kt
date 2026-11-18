@@ -10,6 +10,8 @@ class Navigator(val route: Route) {
     data class State(val along: Double, val offset: Double, val stepIndex: Int, val toNext: Double, val remaining: Double, val etaSec: Double, val arrived: Boolean, val offRoute: Boolean)
 
     var along = 0.0; private set
+    /** You have come onto the route (within [JOIN] m) at least once; before that, being far from it is not "off route". */
+    var joined = false; private set
     var state = State(0.0, 0.0, nextStepAfter(0.0), route.steps.getOrNull(1)?.along ?: route.length, route.length, route.duration, false, false); private set
     private val spoken = HashSet<String>()
     private var offSince = -1.0
@@ -22,9 +24,10 @@ class Navigator(val route: Route) {
         val cues = ArrayList<Pair<Cue, Step?>>()
         val snap = route.line.snap(Geo.toEnu(route.line.origin, p), from = along)
         val tolerance = 18.0 + acc.coerceIn(0.0, 30.0)
+        if (snap.offset <= JOIN) joined = true
         if (snap.offset <= tolerance) { along = maxOf(along, snap.along); offSince = -1.0 }
         else if (offSince < 0) offSince = t
-        val off = offSince >= 0 && t - offSince > 8.0
+        val off = joined && offSince >= 0 && t - offSince > 8.0
         val idx = nextStepAfter(along)
         val step = route.steps[idx]
         val toNext = (step.along - along).coerceAtLeast(0.0)
@@ -39,4 +42,5 @@ class Navigator(val route: Route) {
         }
         return cues
     }
+    companion object { const val JOIN = 12.0 }
 }

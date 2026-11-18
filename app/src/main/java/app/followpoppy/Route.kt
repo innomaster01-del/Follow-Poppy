@@ -98,6 +98,13 @@ class MapboxApi(private val token: String, var language: String = "en") {
     }
 
     /** One 256 px map tile (drawn at twice the resolution for sharp phone screens) of the street map. */
+    /** One Mapbox Streets vector tile (roads, paths, sidewalks, buildings), or null. Call off the main thread. */
+    fun vectorTile(z: Int, x: Int, y: Int): ByteArray? {
+        val c = URL("https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/$z/$x/$y.mvt?access_token=$token").openConnection() as HttpURLConnection
+        c.connectTimeout = 6_000; c.readTimeout = 8_000
+        try { return if (c.responseCode == 200) c.inputStream.readBytes() else null } finally { c.disconnect() }
+    }
+
     fun tileUrl(z: Int, x: Int, y: Int) = "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/$z/$x/$y@2x?access_token=$token"
 
     /** A small street map for the corner / map mode: route in cyan, centred on [center], turned to [bearing]. */
