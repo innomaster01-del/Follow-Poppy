@@ -1,4 +1,5 @@
-"""Turns the character pictures in tools/3d/source (poppy_<girl|boy>_front.png) into textured 3D models with the
+"""Turns the character pictures in tools/3d/source (poppy_<girl|boy>_front.png, and _right / _back when there are
+views from the side and the back) into 3D models with the
 free Hunyuan3D-2 demo on Hugging Face (run on the build server, which has internet). Writes out/<name>.glb and
 out/log.txt (what each demo offers and what happened), so a run that fails says why.
 usage: python make3d.py <source dir> <out dir>"""
@@ -15,8 +16,10 @@ def say(*a):
 # defined"), so it is only used for the shape; 2.1 makes the textured model but needs ~270 s of GPU each.
 # A free account gets only a few minutes a day, so the shape comes first for both (the colours are then painted on
 # from the same picture by paint_from_picture.py); the textured 2.1 model is the fallback.
-PLAN = [('tencent/Hunyuan3D-2', '/shape_generation', False), ('tencent/Hunyuan3D-2.1', '/shape_generation', False),
-        ('tencent/Hunyuan3D-2.1', '/generation_all', True)]
+# With views from the side and the back, the multi-view model (Hunyuan3D-2mv) goes first: the shape then matches the
+# character all round, not only from the front.
+PLAN = [('tencent/Hunyuan3D-2mv', '/shape_generation', False), ('tencent/Hunyuan3D-2', '/shape_generation', False),
+        ('tencent/Hunyuan3D-2.1', '/shape_generation', False), ('tencent/Hunyuan3D-2.1', '/generation_all', True)]
 names = [n for n in ('girl', 'boy') if os.path.exists(os.path.join(src, f'poppy_{n}_front.png'))]
 token = os.environ.get('HF_TOKEN') or None
 
@@ -45,16 +48,26 @@ def client(space):
 
 for n in names:
     for space, ep, textured in PLAN:
-        if any(f.startswith(n + '_') for f in os.listdir(out)): break        # this one is done
+        if any(f.startswith(n + '_') and not f.endswith('.png') for f in os.listdir(out)): break        # this one is done
         try:
             c = client(space)
             params = c.view_api(return_format='dict', print_info=False)['named_endpoints'][ep]['parameters']
             img = handle_file(os.path.join(src, f'poppy_{n}_front.png'))
+            # the side picture shows the character's right side (it faces right); its left side is that mirrored
+            views = {'front': os.path.join(src, f'poppy_{n}_front.png'), 'back': os.path.join(src, f'poppy_{n}_back.png'),
+                     'right': os.path.join(src, f'poppy_{n}_right.png')}
+            if os.path.exists(views['right']):
+                from PIL import Image, ImageOps
+                views['left'] = os.path.join(out, f'_{n}_left.png'); ImageOps.mirror(Image.open(views['right'])).save(views['left'])
+            say(n, space, 'endpoints', [(p.get('parameter_name'), p.get('parameter_has_default')) for p in params])
             kw = {}
             for p in params:
                 pn = p.get('parameter_name') or ''
                 if pn == 'image': kw[pn] = img
-                elif pn == 'caption' or pn.startswith('mv_image'): kw[pn] = None
+                elif pn.startswith('mv_image_'):
+                    v = pn[len('mv_image_'):]
+                    kw[pn] = handle_file(views[v]) if v in views and os.path.exists(views[v]) else None
+                elif pn == 'caption': kw[pn] = None
                 elif pn == 'steps': kw[pn] = 30
                 elif pn == 'octree_resolution': kw[pn] = 256
                 elif pn == 'check_box_rembg': kw[pn] = True
