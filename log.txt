@@ -1,0 +1,9 @@
+girl tencent/Hunyuan3D-2mv endpoints [('caption', True), ('image', True), ('mv_image_front', True), ('mv_image_back', True), ('mv_image_left', True), ('mv_image_right', True), ('steps', True), ('guidance_scale', True), ('seed', True), ('octree_resolution', True), ('check_box_rembg', True), ('num_chunks', True), ('randomize_seed', True)]
+girl tencent/Hunyuan3D-2mv /shape_generation shape only
+  out of GPU time, waiting 75 s
+  result: ({'value': '/tmp/gradio/27d155be254351579eb187d5ca6c93b10ec70602ad33e629228125e386d4dbdf/white_mesh.glb', '__type__': 'update'}, '\n        <div style=\'height: 690; width: 100%;\'>\n        <iframe src="/static/27f8e858-6df3-4315-aa7c-3ebb86e4d246/white_mesh.html" height="690" width="100%" frameborder="0"></iframe>\n        </div>\n    ', {'model': {'shapegen': 'tencent/Hunyuan3D-2mv/hunyuan3d-di
+  files: ['/tmp/gradio/27d155be254351579eb187d5ca6c93b10ec70602ad33e629228125e386d4dbdf/white_mesh.glb'] -> kept ['out/girl_shape_0.glb']
+boy tencent/Hunyuan3D-2mv endpoints [('caption', True), ('image', True), ('mv_image_front', True), ('mv_image_back', True), ('mv_image_left', True), ('mv_image_right', True), ('steps', True), ('guidance_scale', True), ('seed', True), ('octree_resolution', True), ('check_box_rembg', True), ('num_chunks', True), ('randomize_seed', True)]
+boy tencent/Hunyuan3D-2mv /shape_generation shape only
+  result: ({'value': '/tmp/gradio/a31d5100eee8f87adddf1476f3bd9b0512614e0df6ff2bac0022475557868e2c/white_mesh.glb', '__type__': 'update'}, '\n        <div style=\'height: 690; width: 100%;\'>\n        <iframe src="/static/91baecba-6c98-4150-a5a4-5ff9cee492fc/white_mesh.html" height="690" width="100%" frameborder="0"></iframe>\n        </div>\n    ', {'model': {'shapegen': 'tencent/Hunyuan3D-2mv/hunyuan3d-di
+  files: ['/tmp/gradio/a31d5100eee8f87adddf1476f3bd9b0512614e0df6ff2bac0022475557868e2c/white_mesh.glb'] -> kept ['out/boy_shape_0.glb']
