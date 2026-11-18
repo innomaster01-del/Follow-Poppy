@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.followpoppy.SidewalkTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-18T13:10:13.134Z" hostname="runnervmccnms" time="0.019">
+  <properties/>
+  <testcase name="readsVectorTiles" classname="app.followpoppy.SidewalkTest" time="0.005"/>
+  <testcase name="withoutMappedSidewalksBesideTheRoadButNotInABuilding" classname="app.followpoppy.SidewalkTest" time="0.005"/>
+  <testcase name="aRouteOnAFootpathStaysOnIt" classname="app.followpoppy.SidewalkTest" time="0.003"/>
+  <testcase name="trailGoesOnTheMapsSidewalkWithRealCorners" classname="app.followpoppy.SidewalkTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.followpoppy.PoppyGuideTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-18T13:10:13.098Z" hostname="runnervmccnms" time="0.026">
+  <properties/>
+  <testcase name="staysOnTheRouteAndPartiesAtTheEnd" classname="app.followpoppy.PoppyGuideTest" time="0.006"/>
+  <testcase name="waitingTurnsIntoSittingYawningSleepingAndWakesUp" classname="app.followpoppy.PoppyGuideTest" time="0.009"/>
+  <testcase name="walksAheadThenWaitsFacingYou" classname="app.followpoppy.PoppyGuideTest" time="0.002"/>
+  <testcase name="runsToYouWhenYouLeaveTheRouteAndBackWhenYouReturn" classname="app.followpoppy.PoppyGuideTest" time="0.003"/>
+  <testcase name="pointsBeforeATurnAndLooksBothWaysAtTheCorner" classname="app.followpoppy.PoppyGuideTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

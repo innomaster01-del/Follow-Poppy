@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.followpoppy.GroundAndSnapTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-18T13:10:13.057Z" hostname="runnervmccnms" time="0.035">
+  <properties/>
+  <testcase name="walkingStraightCorrectsTheCompass" classname="app.followpoppy.GroundAndSnapTest" time="0.027"/>
+  <testcase name="gpsComparesWithWhereYouWereAndOnlyCorrectsDrift" classname="app.followpoppy.GroundAndSnapTest" time="0.002"/>
+  <testcase name="snapPutsTheTrailUnderYourFeet" classname="app.followpoppy.GroundAndSnapTest" time="0.001"/>
+  <testcase name="floorIsLowInTheSpreadNotTheAverage" classname="app.followpoppy.GroundAndSnapTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

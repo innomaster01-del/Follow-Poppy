@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.followpoppy.RibbonShapeTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-18T13:10:13.125Z" hostname="runnervmccnms" time="0.007">
+  <properties/>
+  <testcase name="textureIsSymmetricAndSolidInTheMiddle" classname="app.followpoppy.RibbonShapeTest" time="0.004"/>
+  <testcase name="sectionsHaveConstantWidthFadeAtBothEndsAndFixedCount" classname="app.followpoppy.RibbonShapeTest" time="0.001"/>
+  <testcase name="roundedCornerIsSmoothAndKeepsDistances" classname="app.followpoppy.RibbonShapeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
