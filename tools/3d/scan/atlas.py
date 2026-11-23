@@ -10,6 +10,7 @@ VIEWS = [('front', np.array([0, 0, 1.]), np.array([1, 0, 0.])), ('right', np.arr
 TILE = 1024
 EAR_Y = 1.0                 # m: above this, the ears (the model is 1.35 m tall here)
 FUR = np.array([0.94, 0.93, 0.93])
+FACE_Y = None              # (low, high) m: the head's height; its front half is painted from the front picture only
 
 def project(P, ref, img, d, r):
     """pixel coords of points P in picture img (fitting the reference shape ref's outline to the picture's)"""
@@ -45,7 +46,16 @@ def build(V, G, dense, denseF, pics, colors):
         lim = 0.2 if name in ('front', 'back') else 0.6
         bonus = 1.25 if name == 'front' else 1.0
         score[:, k] = np.where(vis & (sc > lim), sc * bonus, -1)
+        if k == 0: front_vis = vis
         uvs.append(np.stack([((k % 2) * TILE + X) / (2 * TILE), ((k // 2) * TILE + Y) / (2 * TILE)], 1))
+    # the face: only the front picture paints it. The side picture shows an eye in profile, which would land on the
+    # cheek's side as a second pair of eyes; the front half of the head takes no side picture
+    if FACE_Y is not None:
+        face = (cen[:, 1] > FACE_Y[0]) & (cen[:, 1] < FACE_Y[1]) & (FN[:, 2] > -0.1)
+        score[face, 1] = -1; score[face, 3] = -1
+        # the front picture reaches round the cheeks a little further (it is the only one allowed there)
+        f0 = face & (score[:, 0] < 0) & (FN[:, 2] > 0.05) & front_vis
+        score[f0, 0] = FN[f0, 2]
     # the ears: only their inside is coloured; their back and outer rim take only the back picture (white fur)
     ear = (cen[:, 1] > EAR_Y) & (FN[:, 2] < 0.25)
     score[ear, 0] = -1; score[ear, 1] = -1; score[ear, 3] = -1
@@ -60,6 +70,10 @@ def build(V, G, dense, denseF, pics, colors):
     m = view == 4; UV[m] = [0.5 / (2 * TILE), 0.5 / (2 * TILE)]; COL[m] = colors[vid[m]]
     earV = np.zeros(len(V), bool); earV[G[ear].ravel()] = True
     m2 = m & earV[vid]; COL[m2] = FUR
+    # the face's sides that no picture paints: plain fur (a painted guess would carry the side picture's eye)
+    if FACE_Y is not None:
+        faceV = np.zeros(len(V), bool); faceV[G[hidden & face].ravel()] = True
+        COL[m & faceV[vid]] = FUR
     # no back picture: what faces backwards and no picture sees is plain fur (the painted guess is streaky there)
     if imgs['back'] is None:
         backV = np.zeros(len(V), bool); backV[G[hidden & (FN[:, 2] < -0.15)].ravel()] = True

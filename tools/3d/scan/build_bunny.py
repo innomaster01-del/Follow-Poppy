@@ -99,7 +99,7 @@ def build(shape, n, out, preview=None):
     V, G, cid = cluster(P, F, bp.CELL)
     base = {v: Image.open(os.path.join(SRC, f'poppy_bunny_{v}.png')).convert('RGB') for v in ('front', 'right')}
     pics = {v: soften(recolor(im, girl)) for v, im in base.items()}
-    pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y
+    pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y)
     C = pm.paint(V, G, pics)
     NV, NG, UV, COL, atlas_img, vid = at.build(V, G, P, F, pics, C)
     VN = normals(V, G)[vid]
