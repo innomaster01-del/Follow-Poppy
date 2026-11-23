@@ -75,6 +75,7 @@ def skin_around(a, cx, cy, rx, ry):
 
 
 FACE_BOX = (430, 220, 990, 600)
+MOUTH_DY = 30   # px below the eyes to the smile line
 
 
 def cover_k(girl):
@@ -119,7 +120,7 @@ def face_variants(front, girl):
                 d.arc(box, 200, 340, fill=ink, width=w)
         out.append(img.resize(front.size, Image.LANCZOS))
     # the mouth: under the nose, between the eyes
-    mx = (eyes[0][0] + eyes[1][0]) / 2; my = max(e[1] + e[3] for e in eyes) + 30          # the smile line
+    mx = (eyes[0][0] + eyes[1][0]) / 2; my = max(e[1] + e[3] for e in eyes) + MOUTH_DY    # the smile line
     for kind in ('grin', 'o'):
         img = big()
         col = skin_around(a, mx, my, 40, 18)

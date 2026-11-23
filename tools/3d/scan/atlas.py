@@ -22,12 +22,14 @@ def project(P, ref, img, d, r):
 
 def build(V, G, dense, denseF, pics, colors):
     """V, G: the reduced mesh; dense: the full one (for what each picture can see); colors: painted colour per V."""
-    imgs = {'front': pics['front'], 'right': pics['right'], 'back': pics['back'], 'left': Image.fromarray(np.asarray(pics['right'])[:, ::-1])}
+    imgs = {'front': pics['front'], 'right': pics['right'], 'back': pics.get('back'), 'left': Image.fromarray(np.asarray(pics['right'])[:, ::-1])}
     atlas = Image.new('RGB', (2 * TILE, 2 * TILE), (255, 255, 255))
     FN = np.cross(V[G[:, 1]] - V[G[:, 0]], V[G[:, 2]] - V[G[:, 0]]); FN /= np.linalg.norm(FN, axis=1, keepdims=True) + 1e-12
     cen = V[G].mean(1)
     score = np.full((len(G), 4), -1.0); uvs = []
     for k, (name, d, r) in enumerate(VIEWS):
+        if imgs[name] is None:                     # no picture from there (the back): those triangles get painted colours
+            uvs.append(np.zeros((len(V), 2))); continue
         img = imgs[name].resize((TILE, TILE), Image.LANCZOS); atlas.paste(img, ((k % 2) * TILE, (k // 2) * TILE))
         X, Y = project(V, dense, img, d, r)
         # visibility from the dense shape: nearest surface per 6 px cell
@@ -38,7 +40,11 @@ def build(V, G, dense, denseF, pics, colors):
         CX, CY = project(cen, dense, img, d, r)
         vis = (cen @ d) > zmax[np.clip(CY // kk, 0, TILE // kk + 2).astype(int), np.clip(CX // kk, 0, TILE // kk + 2).astype(int)] - 0.03
         sc = FN @ d
-        score[:, k] = np.where(vis & (sc > 0.2), sc, -1)
+        # the front picture is the best one (the side pictures have coloured rim light): it wins near the edge, and a
+        # side picture is only used where it looks at the surface squarely
+        lim = 0.2 if name in ('front', 'back') else 0.6
+        bonus = 1.25 if name == 'front' else 1.0
+        score[:, k] = np.where(vis & (sc > lim), sc * bonus, -1)
         uvs.append(np.stack([((k % 2) * TILE + X) / (2 * TILE), ((k // 2) * TILE + Y) / (2 * TILE)], 1))
     # the ears: only their inside is coloured; their back and outer rim take only the back picture (white fur)
     ear = (cen[:, 1] > EAR_Y) & (FN[:, 2] < 0.25)
@@ -54,4 +60,8 @@ def build(V, G, dense, denseF, pics, colors):
     m = view == 4; UV[m] = [0.5 / (2 * TILE), 0.5 / (2 * TILE)]; COL[m] = colors[vid[m]]
     earV = np.zeros(len(V), bool); earV[G[ear].ravel()] = True
     m2 = m & earV[vid]; COL[m2] = FUR
+    # no back picture: what faces backwards and no picture sees is plain fur (the painted guess is streaky there)
+    if imgs['back'] is None:
+        backV = np.zeros(len(V), bool); backV[G[hidden & (FN[:, 2] < -0.15)].ravel()] = True
+        m3 = m & backV[vid]; COL[m3] = FUR
     return NV, NG, UV, COL, atlas, vid

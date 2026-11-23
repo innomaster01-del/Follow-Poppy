@@ -13,7 +13,7 @@ EAR_Y = 0.5
 def paint(P, F, pics):
     N = normals(P, F)
     # views: (picture, view direction towards camera, image-right axis)
-    views = [(pics['front'], np.array([0,0,1.]), np.array([1,0,0.])), (pics['back'], np.array([0,0,-1.]), np.array([-1,0,0.])),
+    views = [(pics['front'], np.array([0,0,1.]), np.array([1,0,0.]))] + ([(pics['back'], np.array([0,0,-1.]), np.array([-1,0,0.]))] if pics.get('back') is not None else []) + [
              (pics['right'], np.array([-1,0,0.]), np.array([0,0,1.])), (np.asarray(pics['right'])[:, ::-1], np.array([1,0,0.]), np.array([0,0,-1.]))]
     acc = np.zeros((len(P), 3)); wsum = np.zeros(len(P))
     for img, d, r in views:
