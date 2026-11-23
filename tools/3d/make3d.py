@@ -20,7 +20,9 @@ def say(*a):
 # character all round, not only from the front.
 PLAN = [('tencent/Hunyuan3D-2mv', '/shape_generation', False), ('tencent/Hunyuan3D-2', '/shape_generation', False),
         ('tencent/Hunyuan3D-2.1', '/shape_generation', False), ('tencent/Hunyuan3D-2.1', '/generation_all', True)]
-names = [n for n in ('girl', 'boy') if os.path.exists(os.path.join(src, f'poppy_{n}_front.png'))]
+# which characters: the third argument (comma separated), else the girl and the boy
+want = sys.argv[3].split(',') if len(sys.argv) > 3 else ['girl', 'boy']
+names = [n for n in want if os.path.exists(os.path.join(src, f'poppy_{n}_front.png'))]
 token = os.environ.get('HF_TOKEN') or None
 
 def save(res, name, tag):
