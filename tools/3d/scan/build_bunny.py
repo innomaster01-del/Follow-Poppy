@@ -16,7 +16,7 @@ from build_poppy import Glb, quat, qmul, ss
 from mesh import load, normals
 from decim import normalize, cluster
 from thin import drop_thin
-from smooth import taubin, face_weight, drop_whiskers, fill_holes, close_mouth
+from smooth import taubin, face_weight, drop_whiskers, fill_holes, tuck_thumbs, close_mouth
 import paint as pm
 import atlas as at
 from recolor import recolor, green_eyes
@@ -62,7 +62,7 @@ class EarPaint:
     its colours are patchy after recolouring): white fur on the back and round the rim, and inside, on the part that
     faces forward and lies more than RIM inside the ear's outline, a smooth gradient: deep in the middle and at the
     base, lighter towards the edge. Pink for her, blue for him; only the colour differs."""
-    RIM = 0.02; RIM_SHARE = 0.32; FEATHER = 0.005; CELL = 0.002
+    RIM = 0.022; RIM_SHARE = 0.38; FEATHER = 0.005; CELL = 0.002
     COLOURS = {True: (np.array([1.0, 0.62, 0.78]), np.array([0.92, 0.2, 0.5])),      # light, deep (pink)
                False: (np.array([0.62, 0.8, 1.0]), np.array([0.17, 0.47, 0.95]))}    # (blue)
 
@@ -113,7 +113,11 @@ class EarPaint:
         sat = out.max(1) - out.min(1)
         smear = top & (sat > 0.1) & ~self._inner(P, N)
         out[smear] = bp_fur()
-        return out
+        # the hands: white fur (the picture's blue / pink rim light and nails would show as coloured fingertips)
+        hands = (np.abs(P[:, 0]) > 0.26) & (P[:, 1] > 0.36) & (P[:, 1] < 0.64)
+        sat2 = out.max(1) - out.min(1)
+        k = (np.clip((sat2 - 0.03) / 0.08, 0, 1) * hands)[:, None]
+        return out * (1 - k) + bp_fur()[None] * k
 
     def _inner(self, P, N):
         res = np.zeros(len(P), bool)
@@ -139,6 +143,7 @@ def build(shape, n, out, preview=None):
     P, F = drop_thin(P, F)
     # the face is painted, not carved: whiskers cut off (painted), holes closed, the carved eyes / brows smoothed away
     P, F = drop_whiskers(P, F, 0.675, 0.81, 0.0)
+    P = tuck_thumbs(P, F)                       # no thumbs sticking up (they look like spikes when she moves)
     V, G, cid = cluster(P, F, bp.CELL)
     V, G = fill_holes(V, G)
     V = taubin(V, G, face_weight(V, 0.62, 1.03, half=0.25, zmin=0.02), iters=180)
@@ -149,7 +154,7 @@ def build(shape, n, out, preview=None):
     if girl: pics = {v: green_eyes(im) for v, im in pics.items()}          # her eyes green, his stay blue
     pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y); at.MOUTH = ((0.635, 0.75), 0.11, 0.1); at.SLANT = 0.55   # the whiskers in the picture would streak round the cheeks
     # an HD texture baked texel by texel from the pictures (smooth hand-over between them, plain fur where none sees)
-    NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1),
+    NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1), pad=14,
                                       after=EarPaint(V, girl))
     COL = np.ones((len(NV), 3))
     VN = normals(V, G)[vid]

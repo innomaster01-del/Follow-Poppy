@@ -87,3 +87,16 @@ def close_mouth(V, box, ring):
     m = inbox & (z < zf)
     W[m, 2] = zf[m] - 0.002
     return W
+
+
+def tuck_thumbs(P, F, top=0.565, x0=0.285, y1=0.68):
+    """The picture's bunny gives a thumbs-up, so the scan's hands have thumbs sticking up past the hand: they read as
+    spikes when she moves. The thumb is folded down onto the hand (squashed to a little bump) and smoothed in."""
+    Q = P.copy()
+    m = (np.abs(Q[:, 0]) > x0) & (Q[:, 1] > top) & (Q[:, 1] < y1)
+    Q[m, 1] = top + (Q[m, 1] - top) * 0.22
+    # pull it in a little too (towards the hand's middle) so it is no wider than the hand
+    w = np.zeros(len(Q))
+    near = (np.abs(Q[:, 0]) > x0 - 0.03) & (Q[:, 1] > top - 0.05) & (Q[:, 1] < top + 0.06)
+    w[near] = 1.0
+    return taubin(Q, F, w, iters=60)
