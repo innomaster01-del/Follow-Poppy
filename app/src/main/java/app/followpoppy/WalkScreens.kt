@@ -381,7 +381,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
 
     // things in front of the trail hide it (a fence, a pole, a person), with our own camera material that never lets the
     // ground the trail lies on hide it (tools/materials/poppy_camera_depth.mat, built in CI); without it, no occlusion
-    val occlusionOk = remember { runCatching { context.assets.open(OCCLUSION_MATERIAL).close(); true }.getOrDefault(false) }
+    // switched off for now: on phones it hid Poppy and the trail (2.8); the material stays for a later, careful try
+    val occlusionOk = false
     val cameraStream = rememberARCameraStream(materialLoader) {
         if (occlusionOk) ARCameraStream(materialLoader, depthOcclusionMaterialFile = OCCLUSION_MATERIAL) else createARCameraStream(materialLoader)
     }
@@ -406,9 +407,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             changed = true
                         }
                         // what each part of the picture is: the trail only on sidewalk / road / grass, not on a sill or a fence
-                        if (runCatching { session.isSemanticModeSupported(Config.SemanticMode.ENABLED) }.getOrDefault(false)) {
-                            c.semanticMode = Config.SemanticMode.ENABLED; changed = true
-                        }
+                        // (scene semantics: switched off for now, it could reject the real street as "not walkable")
                         if (changed) runCatching { session.configure(c) }.onFailure {
                             Log.w(TAG, "streetscape not available: ${it.message}")
                             c.streetscapeGeometryMode = Config.StreetscapeGeometryMode.DISABLED; session.configure(c)
@@ -551,7 +550,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     }
                     // how sure we are of the street surface: the whole trail, a shorter one, or none (and no Poppy) until it is seen
                     val floorAgo = maxOf(holder.ground.lastHitAt, holder.rayAt).let { if (it == 0L) Long.MAX_VALUE else tNow - it }
-                    val inside = calib == 2 && holder.labels.indoors(tNow)
+                    val inside = false
                     if (indoors != inside) indoors = inside
                     val cs = holder.conf.update(tNow, true, floorAgo, holder.ground.count(tNow), holder.ground.spread(tNow), terrain != null, if (calib == 2) navState?.offset ?: 0.0 else 0.0, inside)
                     if (arLost) arLost = false
@@ -724,8 +723,10 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                                 }
                             }
                         }
-                        val ground = { s: Double -> holder.profile.heightAt(s, holder.groundY, n.along) }
-                        val gyAt = { s: Double -> if (s < n.along + GroundProfile.NEAR + 1) gyP else ground(s) + (gyP - holder.groundY) * (1 - ((s - n.along - GroundProfile.NEAR - 1) / GroundProfile.BLEND).coerceIn(0.0, 1.0)) }
+                        // one ground height for the whole trail, as before 2.5 (the measured heights along the route made it
+                        // float in places); the rays above still run, for a later, careful try
+                        val ground = { _: Double -> holder.groundY }
+                        val gyAt = { _: Double -> gyP }
                         val pp = poppy.step(dt, n.along, st.offset, r.length, st.arrived, holder.turns, V3(camPos.x, holder.groundY, camPos.z), camPos, ground = { s -> toArR(wr.line.at(sw(s)), gyAt(s)) }, leadCap = cap)
                         if (viewW > 0 && holder.frames % 3 == 0L) pj.screen(pp.ground)?.let { foot ->
                             val hit = runCatching { frame.hitTest(foot[0], foot[1]) }.getOrNull()?.firstOrNull { hr ->
@@ -742,11 +743,14 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         refs.poppy?.let { node -> if (refs.rig == null) refs.rig = runCatching { PoppyRig(engine, node) }.onFailure { Log.w(TAG, "rig: ${it.message}") }.getOrNull() }
                         refs.rig?.apply(pp)
                         // Poppy only stands where the street is known (she fades out with the trail when it is not)
-                        val showP = !mapMode && !holder.approach && holder.conf.shown > 0.05
+                        // Poppy and the trail always show on the route, as before; only far from it ("head to the route")
+                        // or when ARCore has lost its place are they hidden
+                        val broken = holder.conf.state == SurfaceConfidence.State.BROKEN
+                        val showP = !mapMode && !holder.approach && !broken
                         if (poppyShown != showP) poppyShown = showP
                         // the trail in 3D: ribbon, gliding chevrons, her paw prints, her shadow
                         refs.trailRoot?.let { root -> if (refs.trail == null) refs.trail = Trail3D(engine, materialLoader, modelLoader, root, gender) }
-                        refs.trail?.let { t -> if (mapMode) t.hideAll() else t.update(wr, toArR, { x -> ground(ws(x)) }, sw(n.along), if (holder.approach) 0.0 else holder.conf.reach(Trail3D.FAR_TO), if (pp.onRoute) sw(poppy.along) else Double.NaN, pp, now / 1000.0) }
+                        refs.trail?.let { t -> if (mapMode) t.hideAll() else t.update(wr, toArR, { x -> ground(ws(x)) }, sw(n.along), if (holder.approach || broken) 0.0 else Trail3D.FAR_TO, if (pp.onRoute) sw(poppy.along) else Double.NaN, pp, now / 1000.0) }
                         // her speech bubble and her little voice
                         if (poppy.sayCount != holder.lastSay) {
                             holder.lastSay = poppy.sayCount

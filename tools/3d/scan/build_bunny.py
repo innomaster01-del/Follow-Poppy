@@ -19,39 +19,15 @@ from thin import drop_thin
 from smooth import taubin, face_weight, drop_whiskers, fill_holes, close_mouth
 import paint as pm
 import atlas as at
-from recolor import recolor
+from recolor import recolor, green_eyes
 from bake import bake
 TEX = 2048
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'source')
 EAR_Y = 1.06
 
-JOINTS = [('Body', None, (0, 0, 0)), ('Face', 'Body', (0, 0.58, 0.02)), ('EarL', 'Face', (-0.12, 1.06, -0.08)), ('EarR', 'Face', (0.12, 1.06, -0.08)),
-          ('ArmL', 'Body', (-0.19, 0.5, 0.05)), ('ArmR', 'Body', (0.19, 0.5, 0.05)), ('FootL', 'Body', (-0.12, 0.05, 0.04)), ('FootR', 'Body', (0.12, 0.05, 0.04)),
-          ('Tail', 'Body', (0, 0.22, -0.26))]
-JI = {j[0]: i for i, j in enumerate(JOINTS)}
-
-
-def weights(V):
-    x, y, z = V[:, 0], V[:, 1], V[:, 2]; ax = np.abs(x)
-    W = np.zeros((len(V), len(JOINTS)))
-    # the arms reach out sideways; the thumbs stand up beside the cheeks, so above the shoulders an arm is further out
-    lo = np.interp(y, [0.5, 0.6], [0.18, 0.295])
-    arm = ss(lo, lo + 0.035, ax) * ss(0.36, 0.4, y) * (1 - ss(0.74, 0.78, y))
-    head = ss(0.54, 0.62, y) * (1 - arm)
-    ear = ss(1.03, 1.1, y) * head
-    foot = (1 - ss(0.07, 0.13, y)) * (1 - arm)
-    tail = ss(-0.22, -0.27, z) * ss(0.05, 0.09, y) * (1 - ss(0.36, 0.4, y)) * (1 - foot)
-    left = x < 0
-    W[:, JI['EarL']] = ear * left; W[:, JI['EarR']] = ear * ~left
-    W[:, JI['Face']] = head - ear
-    W[:, JI['ArmL']] = arm * left; W[:, JI['ArmR']] = arm * ~left
-    W[:, JI['FootL']] = foot * left; W[:, JI['FootR']] = foot * ~left
-    W[:, JI['Tail']] = tail
-    W[:, JI['Body']] = np.clip(1 - W.sum(1), 0, 1)
-    W /= W.sum(1, keepdims=True)
-    idx = np.argsort(-W, 1)[:, :4]; w = np.take_along_axis(W, idx, 1); w /= w.sum(1, keepdims=True)
-    return idx.astype(np.uint8), w.astype(np.float32)
+from bunny_moves import JOINTS, JI, weights, clips as move_clips, CLIP_NAMES
+import bunny_moves as mv
 
 
 def soften(im, strong=False):
@@ -86,7 +62,7 @@ class EarPaint:
     its colours are patchy after recolouring): white fur on the back and round the rim, and inside, on the part that
     faces forward and lies more than RIM inside the ear's outline, a smooth gradient: deep in the middle and at the
     base, lighter towards the edge. Pink for her, blue for him; only the colour differs."""
-    RIM = 0.022; FEATHER = 0.012; CELL = 0.002
+    RIM = 0.03; FEATHER = 0.006; CELL = 0.002
     COLOURS = {True: (np.array([1.0, 0.62, 0.78]), np.array([0.92, 0.2, 0.5])),      # light, deep (pink)
                False: (np.array([0.62, 0.8, 1.0]), np.array([0.17, 0.47, 0.95]))}    # (blue)
 
@@ -118,7 +94,7 @@ class EarPaint:
             ok = (ij[:, 0] >= 0) & (ij[:, 0] < d.shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < d.shape[1])
             dist = np.zeros(sel.sum()); dist[ok] = d[ij[ok, 0], ij[ok, 1]]
             y = P[sel, 1]; nz = N[sel, 2]
-            inner = ss(self.RIM, self.RIM + self.FEATHER, dist) * ss(0.1, 0.45, nz)
+            inner = ss(self.RIM, self.RIM + self.FEATHER, dist) * ss(0.25, 0.45, nz)
             t = np.clip(dist / max(dmax, 1e-6), 0, 1)
             deep = np.clip(0.8 * ss(0.15, 0.7, t) + 0.5 * (1 - ss(EAR_Y, EAR_Y + 0.12, y)), 0, 1)
             inside = self.light[None] * (1 - deep[:, None]) + self.deep[None] * deep[:, None]
@@ -153,34 +129,6 @@ def bp_fur():
     return FUR
 
 
-def clips():
-    out = []
-    T = 0.56; t = np.linspace(0, T, 17); ph = 2 * np.pi * t / T
-    walk = {   # a bouncy bunny walk: a little hop each step, ears and tail bobbing
-        'Body': ([[0, 0.035 * abs(math.sin(p)), 0] for p in ph], [qmul(quat((0, 0, 1), 0.06 * math.sin(p)), quat((1, 0, 0), 0.06)) for p in ph]),
-        'FootL': ([[-0.12, 0.05 + 0.04 * max(0, math.sin(p)), 0.04 + 0.06 * math.cos(p)] for p in ph], None),
-        'FootR': ([[0.12, 0.05 + 0.04 * max(0, -math.sin(p)), 0.04 - 0.06 * math.cos(p)] for p in ph], None),
-        'ArmL': (None, [qmul(quat((0, 0, 1), -0.75), quat((1, 0, 0), -0.4 * math.cos(p))) for p in ph]),
-        'ArmR': (None, [qmul(quat((0, 0, 1), 0.75), quat((1, 0, 0), 0.4 * math.cos(p))) for p in ph]),
-        'EarL': (None, [qmul(quat((0, 0, 1), 0.07 * math.sin(2 * p)), quat((1, 0, 0), -0.12 * abs(math.sin(p)))) for p in ph]),
-        'EarR': (None, [qmul(quat((0, 0, 1), -0.07 * math.sin(2 * p)), quat((1, 0, 0), -0.12 * abs(math.sin(p)))) for p in ph]),
-        'Tail': (None, [quat((0, 1, 0), 0.35 * math.sin(2 * p)) for p in ph]),
-    }
-    out.append(('walk', t, walk))
-    T = 2.4; t = np.linspace(0, T, 25); ph = 2 * np.pi * t / T
-    idle = {   # arms relaxed down a little, breathing, an ear twitch, a tail wiggle
-        'Body': ([[0, 0.006 * (1 - math.cos(p)), 0] for p in ph], [[0, 0, 0, 1] for p in ph]),
-        'FootL': ([[-0.12, 0.05, 0.04] for p in ph], None), 'FootR': ([[0.12, 0.05, 0.04] for p in ph], None),
-        'ArmL': (None, [quat((0, 0, 1), -0.7 - 0.05 * math.sin(p)) for p in ph]),
-        'ArmR': (None, [quat((0, 0, 1), 0.7 + 0.05 * math.sin(p)) for p in ph]),
-        'EarL': (None, [quat((0, 0, 1), 0.05 * math.sin(p) + 0.04 * math.sin(3 * p)) for p in ph]),
-        'EarR': (None, [quat((0, 0, 1), -0.05 * math.sin(p + 0.6)) for p in ph]),
-        'Tail': (None, [quat((0, 1, 0), 0.2 * math.sin(2 * p)) for p in ph]),
-    }
-    out.append(('idle', t, idle))
-    return out
-
-
 def build(shape, n, out, preview=None):
     girl = n == 'girl'
     P, F = load(shape); P = normalize(P, bp.HEIGHT)
@@ -194,6 +142,7 @@ def build(shape, n, out, preview=None):
     V = taubin(V, G, face_weight(V, 0.62, 0.77, half=0.13, zmin=0.1, soft=0.03), iters=60)
     base = {v: Image.open(os.path.join(SRC, f'poppy_bunny_{v}.png')).convert('RGB') for v in ('front', 'right')}
     pics = {v: soften(recolor(im, girl), strong=(v == 'right')) for v, im in base.items()}
+    if girl: pics = {v: green_eyes(im) for v, im in pics.items()}          # her eyes green, his stay blue
     pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y); at.MOUTH = ((0.635, 0.75), 0.11, 0.1); at.SLANT = 0.55   # the whiskers in the picture would streak round the cheeks
     # an HD texture baked texel by texel from the pictures (smooth hand-over between them, plain fur where none sees)
     NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1),
@@ -247,7 +196,55 @@ def build(shape, n, out, preview=None):
     for s_, e in zip('LR', eyes):
         looks += [(f'EyeOpen{s_}', None, True), (f'EyeClosed{s_}', patch(e, 0, 1.8), False), (f'EyeHappy{s_}', patch(e, 1, 1.8), False)]
     looks += [('MouthSmile', None, True), ('MouthGrin', patch(mouth, 2, 1.5), False), ('MouthO', patch(mouth, 3, 1.5), False)]
+    # the props: hidden until a move shows them (the app switches them like the faces)
+    theme = np.array([0.95, 0.27, 0.56]) if girl else np.array([0.2, 0.52, 0.98])
+    def mat(name, colour, emissive=(0, 0, 0), rough=0.5, tex=None):
+        m = {'name': name, 'pbrMetallicRoughness': {'baseColorFactor': [float(c) for c in colour] + [1.0], 'metallicFactor': 0.0, 'roughnessFactor': rough},
+             'emissiveFactor': [float(e) for e in emissive]}
+        if tex is not None: m['pbrMetallicRoughness']['baseColorTexture'] = {'index': tex}; m['emissiveTexture'] = {'index': tex}
+        g['materials'].append(m); return len(g['materials']) - 1
+    def prop_mesh(parts):
+        prims = []
+        for (V_, F_), mi, smooth, uv in parts:
+            if smooth: P_, G_, N_ = V_, F_, mv.smooth_normals(V_, F_)
+            else: P_, G_, N_ = mv.flat_normals(V_, F_)
+            attrs = {'POSITION': gl.acc(np.asarray(P_, np.float32), 'VEC3', 34962, True), 'NORMAL': gl.acc(np.asarray(N_, np.float32), 'VEC3', 34962)}
+            if uv is not None: attrs['TEXCOORD_0'] = gl.acc(uv(P_).astype(np.float32), 'VEC2', 34962)
+            prims.append({'attributes': attrs, 'indices': gl.acc(np.asarray(G_, np.uint16).ravel(), 'SCALAR', 34963), 'material': mi})
+        meshes.append({'primitives': prims}); return len(meshes) - 1
+    pin_body, pin_dot = mv.pin_mesh(1.25)
+    m_theme = mat('PropTheme', theme, theme * 0.25, 0.35); m_white = mat('PropWhite', (1, 1, 1), (0.25, 0.25, 0.25), 0.4)
+    pin_m = prop_mesh([(pin_body, m_theme, True, None), (pin_dot, m_white, True, None)])
+    # the phone: dark body, a glowing screen with the paw-pin
+    from PIL import ImageDraw
+    scr = Image.new('RGB', (128, 224), (16, 32, 70)); d_ = ImageDraw.Draw(scr)
+    d_.ellipse([34, 70, 94, 130], fill=tuple(int(c * 255) for c in theme)); d_.polygon([(40, 112), (88, 112), (64, 156)], fill=tuple(int(c * 255) for c in theme))
+    for cx, cy, r in ((64, 104, 9), (50, 88, 5), (60, 82, 5), (70, 82, 5), (78, 88, 5)): d_.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
+    scr_tex = gl.image(scr, 90)
+    m_dark = mat('PropPhone', (0.06, 0.08, 0.14), (0, 0, 0), 0.3); m_screen = mat('PropScreen', (1, 1, 1), (0.9, 0.9, 0.9), 0.2, scr_tex)
+    sw_, sh_ = 0.09, 0.165
+    phone_m = prop_mesh([(mv.box_mesh(0.1, 0.18, 0.014), m_dark, False, None),
+                         ((mv.box_mesh(sw_, sh_, 0.002)[0] + np.array([0, 0, 0.0065]), mv.box_mesh(sw_, sh_, 0.002)[1]), m_screen, False,
+                          lambda P_: np.stack([(P_[:, 0] + sw_ / 2) / sw_, 1 - (P_[:, 1] + sh_ / 2) / sh_], 1))])
+    m_glow = mat('PropGlow', (0.35, 0.7, 1.0), (0.3, 0.65, 1.0), 0.3)
+    arrow_m = prop_mesh([(mv.arrow_mesh(), m_glow, False, None)])
+    m_ring = mat('PropRing', (0.3, 0.9, 1.0), (0.25, 0.85, 1.0), 0.3)
+    ring_m = prop_mesh([(mv.ring_mesh(), m_ring, True, None)])
     g['meshes'] = meshes
+    hand = mv.HAND_X - 0.285          # from the elbow to the hand, along the arm
+    # a prop in a hand is turned so that, in the move that shows it, it faces you upright (screen / arrow towards you)
+    from scipy.spatial.transform import Rotation as Rot
+    cl = {c[0]: c for c in move_clips()}
+    def facing(clip, arm_j, elbow_j, tilt=-0.25):
+        _, t_, ch, _p = cl[clip]
+        q = Rot.from_quat(ch['Body'][1][0]) * Rot.from_quat(ch[arm_j][1][0]) * Rot.from_quat(ch[elbow_j][1][0])
+        want = Rot.from_rotvec([tilt, 0, 0])
+        return (q.inv() * want).as_quat().tolist()
+    props = [('PropPin', 'Body', pin_m, (0, 0.33, 0.2), None),
+             ('PropPhone', 'ElbowL', phone_m, (-hand - 0.06, 0.02, 0.0), facing('phone', 'ArmL', 'ElbowL')),
+             ('PropArrowL', 'ElbowL', arrow_m, (-hand - 0.07, 0.03, 0.0), facing('point_r', 'ArmL', 'ElbowL', 0.0)),
+             ('PropArrowR', 'ElbowR', arrow_m, (hand + 0.07, 0.03, 0.0), facing('point_l', 'ArmR', 'ElbowR', 0.0)),
+             ('PropRing', None, ring_m, (0, 0.002, 0.03), None)]
 
     nodes = [{'name': 'Poppy', 'children': [1, 2]}, {'name': 'PoppyMesh', 'mesh': 0, 'skin': 0}]
     jnode = {}
@@ -264,6 +261,12 @@ def build(shape, n, out, preview=None):
         if mesh is not None: nd['mesh'] = mesh
         if not shown: nd['scale'] = [1e-4, 1e-4, 1e-4]
         nodes.append(nd); nodes[jnode['Face']].setdefault('children', []).append(len(nodes) - 1)
+    for name, parent, mesh, t_, _r in props:
+        nd = {'name': name, 'mesh': mesh, 'translation': list(t_), 'scale': [1e-4, 1e-4, 1e-4]}
+        if _r is not None: nd['rotation'] = _r
+        nodes.append(nd)
+        if parent: nodes[jnode[parent]].setdefault('children', []).append(len(nodes) - 1)
+        else: nodes[0]['children'].append(len(nodes) - 1)
     g['nodes'] = nodes
     ibm = np.zeros((len(JOINTS), 16), np.float32)
     for i, (_, _, pos) in enumerate(JOINTS):
@@ -272,7 +275,7 @@ def build(shape, n, out, preview=None):
     g['scenes'] = [{'nodes': [0]}]; g['scene'] = 0
 
     anims = []
-    for cname, t, chans in clips():
+    for cname, t, chans, _props in move_clips():
         samplers = []; channels = []
         ti = gl.acc(t.astype(np.float32), 'SCALAR', None, True)
         for jn, (tr, rot) in chans.items():

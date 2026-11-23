@@ -64,3 +64,31 @@ def recolor(im, to_pink):
 if __name__ == '__main__':
     im = Image.open(sys.argv[1])
     recolor(im, True).save(sys.argv[2]); recolor(im, False).save(sys.argv[3])
+
+
+GREEN_HUE = 0.37
+
+def green_eyes(im):
+    """Her eyes green (his stay blue): the blue of the irises, only inside the eyes (found from the dark pupils)."""
+    a = np.asarray(im.convert('RGB')).astype(float) / 255
+    mx = a.max(2); mn = a.min(2); d = mx - mn; s = np.where(mx > 0, d / np.maximum(mx, 1e-9), 0)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    m = d > 1e-9
+    rc = np.where(m, (mx - r) / np.maximum(d, 1e-9), 0); gc = np.where(m, (mx - g) / np.maximum(d, 1e-9), 0); bc = np.where(m, (mx - b) / np.maximum(d, 1e-9), 0)
+    h = np.where(r == mx, bc - gc, np.where(g == mx, 2 + rc - bc, 4 + gc - rc)); h = (h / 6) % 1
+    H, W = mx.shape
+    dark = mx < 0.22
+    lab, n = ndimage.label(dark); sizes = ndimage.sum(dark, lab, range(1, n + 1))
+    objs = sorted([o for sz, o in zip(sizes, ndimage.find_objects(lab)) if sz > 120 and o[0].start < H * 0.6], key=lambda o: -(o[0].stop - o[0].start) * (o[1].stop - o[1].start))[:2]
+    yy, xx = np.mgrid[0:H, 0:W]
+    eye = np.zeros((H, W), bool)
+    for o in objs:
+        cx = (o[1].start + o[1].stop) / 2; cy = (o[0].start + o[0].stop) / 2; sz = max(o[1].stop - o[1].start, o[0].stop - o[0].start)
+        eye |= (xx - cx) ** 2 + (yy - cy) ** 2 < (sz * 0.72) ** 2
+    src = eye & (s > 0.3) & (h > 0.45) & (h < 0.75)
+    v = mx; nh = GREEN_HUE
+    i = int(np.floor(nh * 6)) % 6; f = nh * 6 - np.floor(nh * 6)
+    p = v * (1 - s); q = v * (1 - s * f); t = v * (1 - s * (1 - f))
+    new = np.stack([(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i], -1)
+    out = np.where(src[..., None], new, a)
+    return Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8))
