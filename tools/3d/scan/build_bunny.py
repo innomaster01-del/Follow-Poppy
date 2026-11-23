@@ -81,6 +81,78 @@ def soften(im, strong=False):
     return Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8))
 
 
+class EarPaint:
+    """The ears are painted by rule, not from the picture (the picture's ear never sits exactly on the model's ear, and
+    its colours are patchy after recolouring): white fur on the back and round the rim, and inside, on the part that
+    faces forward and lies more than RIM inside the ear's outline, a smooth gradient: deep in the middle and at the
+    base, lighter towards the edge. Pink for her, blue for him; only the colour differs."""
+    RIM = 0.022; FEATHER = 0.012; CELL = 0.002
+    COLOURS = {True: (np.array([1.0, 0.62, 0.78]), np.array([0.92, 0.2, 0.5])),      # light, deep (pink)
+               False: (np.array([0.62, 0.8, 1.0]), np.array([0.17, 0.47, 0.95]))}    # (blue)
+
+    def __init__(self, V, girl):
+        self.light, self.deep = self.COLOURS[girl]
+        self.maps = []
+        for side in (-1, 1):
+            m = (V[:, 1] > EAR_Y - 0.03) & (V[:, 0] * side > 0.03)
+            pts = V[m][:, :2]
+            lo = pts.min(0) - 0.02; shape = np.ceil((pts.max(0) + 0.02 - lo) / self.CELL).astype(int) + 1
+            g = np.zeros(shape, bool); ij = ((pts - lo) / self.CELL).astype(int); g[ij[:, 0], ij[:, 1]] = True
+            from scipy import ndimage
+            g = ndimage.binary_closing(ndimage.binary_dilation(g, iterations=2), iterations=3); g = ndimage.binary_fill_holes(g)
+            g = ndimage.binary_erosion(g, iterations=2)
+            # the ear's bottom is where it grows out of the head, not an edge: carry the mask on below it
+            pad = int(0.08 / self.CELL)
+            gp = np.concatenate([np.repeat(g[:, :1], pad, 1), g], 1)
+            base = np.where(g.any(0))[0]
+            if len(base): gp[:, :pad + base[0] + int(0.04 / self.CELL)] |= g[:, base[0]:base[0] + int(0.04 / self.CELL)].any(1)[:, None]
+            d = ndimage.distance_transform_edt(gp)[:, pad:] * self.CELL
+            self.maps.append((side, lo, d, d.max()))
+
+    def __call__(self, P, N, col):
+        out = col.copy()
+        for side, lo, d, dmax in self.maps:
+            sel = (P[:, 0] * side > 0.02) & (P[:, 1] > EAR_Y - 0.06)
+            if not sel.any(): continue
+            ij = ((P[sel, :2] - lo) / self.CELL).astype(int)
+            ok = (ij[:, 0] >= 0) & (ij[:, 0] < d.shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < d.shape[1])
+            dist = np.zeros(sel.sum()); dist[ok] = d[ij[ok, 0], ij[ok, 1]]
+            y = P[sel, 1]; nz = N[sel, 2]
+            inner = ss(self.RIM, self.RIM + self.FEATHER, dist) * ss(0.1, 0.45, nz)
+            t = np.clip(dist / max(dmax, 1e-6), 0, 1)
+            deep = np.clip(0.8 * ss(0.15, 0.7, t) + 0.5 * (1 - ss(EAR_Y, EAR_Y + 0.12, y)), 0, 1)
+            inside = self.light[None] * (1 - deep[:, None]) + self.deep[None] * deep[:, None]
+            # where the ear grows out of the head the rule fades out (the head keeps its own colour below)
+            grow = ss(EAR_Y - 0.05, EAR_Y + 0.01, y)
+            fur = bp_fur()
+            painted = fur[None] * (1 - inner[:, None]) + inside * inner[:, None]
+            out[sel] = col[sel] * (1 - grow[:, None]) + painted * grow[:, None]
+        # the top of the head round the ears' roots: the picture's ear colour runs onto it there; only fur (the grey
+        # brows are not coloured, they stay)
+        top = P[:, 1] > 0.9
+        sat = out.max(1) - out.min(1)
+        smear = top & (sat > 0.1) & ~self._inner(P, N)
+        out[smear] = bp_fur()
+        return out
+
+    def _inner(self, P, N):
+        res = np.zeros(len(P), bool)
+        for side, lo, d, dmax in self.maps:
+            sel = (P[:, 0] * side > 0.02) & (P[:, 1] > EAR_Y - 0.06)
+            if not sel.any(): continue
+            ij = ((P[sel, :2] - lo) / self.CELL).astype(int)
+            ok = (ij[:, 0] >= 0) & (ij[:, 0] < d.shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < d.shape[1])
+            dist = np.zeros(sel.sum()); dist[ok] = d[ij[ok, 0], ij[ok, 1]]
+            idx = np.where(sel)[0]
+            res[idx] = (dist > self.RIM * 0.6) & (N[sel, 2] > 0.05)
+        return res
+
+
+def bp_fur():
+    from bake import FUR
+    return FUR
+
+
 def clips():
     out = []
     T = 0.56; t = np.linspace(0, T, 17); ph = 2 * np.pi * t / T
@@ -124,7 +196,8 @@ def build(shape, n, out, preview=None):
     pics = {v: soften(recolor(im, girl), strong=(v == 'right')) for v, im in base.items()}
     pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y); at.MOUTH = ((0.635, 0.75), 0.11, 0.1); at.SLANT = 0.55   # the whiskers in the picture would streak round the cheeks
     # an HD texture baked texel by texel from the pictures (smooth hand-over between them, plain fur where none sees)
-    NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1))
+    NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1),
+                                      after=EarPaint(V, girl))
     COL = np.ones((len(NV), 3))
     VN = normals(V, G)[vid]
     J, W = weights(V); J = J[vid]; W = W[vid]

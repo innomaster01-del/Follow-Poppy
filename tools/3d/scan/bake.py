@@ -58,7 +58,8 @@ def charts(V, G):
     return lab, comp, n
 
 
-def bake(V, G, ref, pics, size=2048, face_y=None, ear_y=None, slant=0.55, mouth=None, pad=4):
+def bake(V, G, ref, pics, size=2048, face_y=None, ear_y=None, slant=0.55, mouth=None, pad=4, after=None):
+    """[after]: (positions, normals, colours) → colours, for parts painted by rule rather than from the pictures."""
     lab, comp, n = charts(V, G)
     # per chart: flat coordinates along its direction's two other axes
     axes2 = {0: (2, 1, -1), 1: (2, 1, 1), 2: (0, 2, 1), 3: (0, 2, -1), 4: (0, 1, 1), 5: (0, 1, -1)}
@@ -125,6 +126,7 @@ def bake(V, G, ref, pics, size=2048, face_y=None, ear_y=None, slant=0.55, mouth=
             P3 = np.einsum('sk,tkd->tsd', B, V2[T]).reshape(-1, 3)
             N3 = np.einsum('sk,tkd->tsd', B, VN[T]).reshape(-1, 3); N3 /= np.linalg.norm(N3, axis=1, keepdims=True) + 1e-9
             col, wsum = shade(P3, N3, views, depth, to_pic, face_y, ear_y, slant, mouth)
+            if after is not None: col = after(P3, N3, col)
             xi = np.clip(px[:, 0].astype(int), 0, size - 1); yi = np.clip(px[:, 1].astype(int), 0, size - 1)
             tex[yi, xi] = col; have[yi, xi] = True
     # grow the charts' colours a few texels outwards (no seams when the texture is filtered)
