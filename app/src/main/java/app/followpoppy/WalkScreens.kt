@@ -637,8 +637,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                                 holder.offWalk = sn.offset
                             } else { holder.snap.update(userE, r.line, n.along, n.state.offset, if (settled) 0.04 else 0.15); holder.offWalk = n.state.offset - 4.5 }
                             // off the sidewalk (GPS / VPS position, give or take): beside the street, in a yard or a garden
-                            val acc = sensors.location?.accuracy ?: 10f
-                            if (holder.offWalk > OFF_WALK_M + acc * 0.3) { if (holder.offWalkSince == 0L) holder.offWalkSince = now } else holder.offWalkSince = 0L
+                            val gpsErr = sensors.location?.accuracy ?: 10f
+                            if (holder.offWalk > OFF_WALK_M + gpsErr * 0.3) { if (holder.offWalkSince == 0L) holder.offWalkSince = now } else holder.offWalkSince = 0L
                             if (!usedVps) holder.motion.update(camPos, n.along, n.state.offset, r.line) { dx, dz -> (Math.toDegrees(align.arAngle(dx, dz) - align.yaw) + 360) % 360 }?.let { m -> align.headingSoft(m[0], m[1], m[2], 0.25); Log.i(TAG, "heading from walking: ${m[2].roundToInt()}°") }
                             val loc = sensors.location
                             if (!usedVps && loc != null && loc.hasBearing() && loc.speed > 0.9f && (android.os.Build.VERSION.SDK_INT < 26 || !loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees < 25f)) {
