@@ -1,0 +1,5 @@
+--------- beginning of main
+11-23 23:31:51.203  4834  4834 I FollowPoppy: session geo=ENABLED streetscape=ENABLED depth=DISABLED semantics=DISABLED occlusion=false
+11-23 23:31:52.976  4834  4834 I FollowPoppy: route 341 m, 3 steps: Walk south on יהושע בן נון. | Turn left onto ארלוזורוב. | Your destination is on the right.
+11-23 23:31:53.319  4834  4834 W FollowPoppy: map image: The coroutine scope left the composition
+11-23 23:31:59.323  4834  4834 I FollowPoppy: route sidewalks: map has them on the right 0%, left 0%, route on walkways 69%; 23 sidewalk lines, 41 paths, 49 roads, 326 buildings
