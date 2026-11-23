@@ -282,7 +282,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
             // her voice speaks the app's language: Hebrew, or English (US) in English mode whatever the phone's language
             val want = if (w.he) Locale.forLanguageTag("he-IL") else Locale.US
             if (setLanguage(want) < TextToSpeech.LANG_AVAILABLE && w.he) setLanguage(Locale.forLanguageTag("iw"))
-            voices?.filter { it.locale.language == want.language && !it.isNetworkConnectionRequired }?.minByOrNull { it.quality * -1 }?.let { voice = it }
+            voices?.filter { it.locale.language == want.language && !it.isNetworkConnectionRequired }?.minByOrNull { it.quality * -1 }?.let { this.voice = it }
             setPitch(1.55f); setSpeechRate(1.05f)
         } }
         onDispose { tts[0]?.shutdown() }
