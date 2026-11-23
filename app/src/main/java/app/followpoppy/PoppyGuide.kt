@@ -239,6 +239,8 @@ class PoppyGuide {
 /**
  * Puts Poppy's model where the guide says, every frame, straight through Filament: the clip (walk or idle), then her
  * head turn, raised arms, sitting, and which eyes / mouth show (the GLB has each face in its own node; hidden = tiny scale).
+ * The model is one skinned body (made from the character pictures, tools/3d/scan); Body, Face, ArmL/R, FootL/R and
+ * EarL/R are its joints.
  * In the model she faces +z and her own left is +x: node "ArmR" is at +x (her left arm), "ArmL" at −x.
  */
 class PoppyRig(engine: Engine, private val node: ModelNode) {
@@ -261,9 +263,9 @@ class PoppyRig(engine: Engine, private val node: ModelNode) {
         node.worldQuaternion = dev.romainguy.kotlin.math.Quaternion(0f, sin(h).toFloat(), 0f, cos(h).toFloat())
         if (animator.animationCount > p.clip) {
             val len = animator.getAnimationDuration(p.clip).toDouble().coerceAtLeast(0.01)
-            animator.applyAnimation(p.clip, (p.clipTime % len).toFloat()); animator.updateBoneMatrices()
+            animator.applyAnimation(p.clip, (p.clipTime % len).toFloat())
         }
-        if (!ok) return
+        if (!ok) { animator.updateBoneMatrices(); return }
         if (p.sit > 0.01) tm.setTransform(body, M4.trs(0.0, -0.035 * p.sit, -0.015 * p.sit, 1 + 0.03 * p.sit, 1 - 0.06 * p.sit, 1 + 0.03 * p.sit))
         tm.setTransform(face, M4.mul(faceRest, M4.rotY(p.faceYaw)))
         if (p.armLeft > 0.02 && armPlusX != 0) tm.setTransform(armPlusX, M4.withRotation(armPlusRest, M4.mul(M4.rotZ(p.armLeft), M4.rotX(-0.35))))
@@ -273,6 +275,8 @@ class PoppyRig(engine: Engine, private val node: ModelNode) {
             show("EyeOpen$s", p.eyes == PoppyGuide.Eyes.OPEN); show("EyeHappy$s", p.eyes == PoppyGuide.Eyes.HAPPY); show("EyeClosed$s", p.eyes == PoppyGuide.Eyes.CLOSED)
         }
         show("MouthSmile", p.mouth == PoppyGuide.Mouth.SMILE); show("MouthGrin", p.mouth == PoppyGuide.Mouth.GRIN); show("MouthO", p.mouth == PoppyGuide.Mouth.O)
+        // she is one skinned body: the joints' final places (clip, then head turn / arms / sitting) move the skin
+        animator.updateBoneMatrices()
     }
 }
 

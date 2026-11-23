@@ -413,3 +413,13 @@ class SidewalkTest {
         assertTrue(Geo.distance(Mvt.place(16, t[0], t[1], 0.5, 0.5), LatLng(32.08, 34.78)) < 400)
     }
 }
+
+class EnglishTest {
+    @Test fun hebrewNamesInEnglishLetters() {
+        assertEquals("Ben Yehoda", HebrewLatin.spell("בן יהודה"))
+        assertEquals("Arlozorov", HebrewLatin.spell("ארלוזורוב"))
+        assertEquals("Turn left onto Dizengoff Street", HebrewLatin.english("Turn left onto דיזנגוף", mapOf("דיזנגוף" to "Dizengoff Street")))
+        assertFalse(HebrewLatin.has(HebrewLatin.english("Head north on אבן גבירול")))
+        assertEquals("Turn right", HebrewLatin.english("Turn right"))
+    }
+}

@@ -49,7 +49,7 @@ class MapboxApi(private val token: String, var language: String = "en") {
         }
         var out = merged.values.toList()
         if (out.isEmpty()) out = geocode(q, near, limit)
-        return sortByDistance(out, near)
+        return inLanguage(sortByDistance(out, near))
     }
 
     /**
@@ -69,13 +69,19 @@ class MapboxApi(private val token: String, var language: String = "en") {
                 parseSearchBox(get("https://api.mapbox.com/search/searchbox/v1/category/${URLEncoder.encode(c, "UTF-8")}?limit=25&language=$language&proximity=${near.lng},${near.lat}&bbox=$box&access_token=$token", fast))
             }.getOrElse { e -> if (e.message?.contains("HTTP 4") == true) bad = true; emptyList() })
             if (bad) unknown.add(c)
-            if (found.isNotEmpty()) { worked[categories.first()] = c; return sortByDistance(found, near) }
+            if (found.isNotEmpty()) { worked[categories.first()] = c; return inLanguage(sortByDistance(found, near)) }
         }
         for (q in queries) {
             val found = close(runCatching { searchBox(q, near, language, 10, box) }.getOrElse { emptyList() })
-            if (found.isNotEmpty()) return sortByDistance(found, near)
+            if (found.isNotEmpty()) return inLanguage(sortByDistance(found, near))
         }
         return emptyList()
+    }
+
+    /** In English, names that are only in Hebrew are spelled in English letters (the Hebrew stays as the second name). */
+    private fun inLanguage(l: List<Place>): List<Place> = if (language != "en") l else l.map { p ->
+        if (!HebrewLatin.has(p.name) && !HebrewLatin.has(p.address)) p
+        else p.copy(name = HebrewLatin.english(p.name), address = HebrewLatin.english(p.address), alt = p.alt.ifEmpty { if (HebrewLatin.has(p.name)) p.name else "" })
     }
 
     private val worked = java.util.concurrent.ConcurrentHashMap<String, String>()

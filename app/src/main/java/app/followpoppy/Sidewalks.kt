@@ -134,7 +134,7 @@ object Mvt {
 
 // ---------------------------------------------------------------- what the map knows around the route
 
-class StreetData(val walks: List<Way>, val sidewalks: List<Way>, val roads: List<Way>, val buildings: List<List<Enu>>) {
+class StreetData(val walks: List<Way>, val sidewalks: List<Way>, val roads: List<Way>, val buildings: List<List<Enu>>, val names: Map<String, String> = emptyMap()) {
     /** A line of the map: its kind (road class, or path type) and its points in the route's metres. */
     class Way(val kind: String, val pts: List<Enu>)
 
@@ -162,6 +162,7 @@ class StreetData(val walks: List<Way>, val sidewalks: List<Way>, val roads: List
                 s += 20.0
             }
             val walks = ArrayList<Way>(); val sidewalks = ArrayList<Way>(); val roads = ArrayList<Way>(); val buildings = ArrayList<List<Enu>>()
+            val names = HashMap<String, String>()          // a street's local (Hebrew) name → its English name, for English mode
             for (k in want.take(maxTiles)) {
                 val x = (k shr 32).toInt(); val y = (k and 0xffffffffL).toInt()
                 val bytes = runCatching { tile(ZOOM, x, y) }.getOrNull() ?: continue
@@ -170,6 +171,8 @@ class StreetData(val walks: List<Way>, val sidewalks: List<Way>, val roads: List
                     val parts = f.parts.map { part -> part.map { q -> Geo.toEnu(line.origin, Mvt.place(ZOOM, x, y, q[0], q[1])) } }.filter { it.size >= 2 }
                     if (f.layer == "building") { if (f.type == 3) buildings.addAll(parts); continue }
                     if (f.type != 2) continue
+                    val local = f.props["name"] as? String; val en = f.props["name_en"] as? String
+                    if (local != null && en != null && HebrewLatin.has(local) && !HebrewLatin.has(en)) names[local] = en
                     val cls = f.props["class"] as? String ?: continue
                     val type = f.props["type"] as? String ?: ""
                     when {
@@ -179,7 +182,7 @@ class StreetData(val walks: List<Way>, val sidewalks: List<Way>, val roads: List
                     }
                 }
             }
-            return StreetData(walks, sidewalks, roads, buildings)
+            return StreetData(walks, sidewalks, roads, buildings, names)
         }
     }
 }

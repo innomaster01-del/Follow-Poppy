@@ -271,15 +271,24 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         val dots = ArrayDeque<V3>(); @Volatile var tap: FloatArray? = null; var tapped = false; var lookFrom = 0L; var foundAt = 0L
         val profile = GroundProfile(); val conf = SurfaceConfidence(); var rayCell = 0; var rayAt = 0L
         // the sidewalk: the map around the route, the plan (how far left / right), the side you walk on, the line to draw
+        @Volatile var streetNames: Map<String, String> = emptyMap()   // Hebrew street name → English (English mode)
         @Volatile var plan: SidewalkPlan? = null; var walk: WalkLine? = null; var walkRoute: Route? = null; var side = 0; var sideSince = 0L
         var approach = false                                      // far from the route: no AR yet, an arrow to it
     } }
     val tts = remember { arrayOfNulls<TextToSpeech>(1) }
     DisposableEffect(Unit) {
         // Poppy's voice: higher and a little quicker than the phone's normal voice, after her chirp
-        tts[0] = TextToSpeech(context) { st -> if (st == TextToSpeech.SUCCESS) tts[0]?.apply { language = Locale.forLanguageTag(if (w.he) "he" else "en"); setPitch(1.55f); setSpeechRate(1.05f) } }
+        tts[0] = TextToSpeech(context) { st -> if (st == TextToSpeech.SUCCESS) tts[0]?.apply {
+            // her voice speaks the app's language: Hebrew, or English (US) in English mode whatever the phone's language
+            val want = if (w.he) Locale.forLanguageTag("he-IL") else Locale.US
+            if (setLanguage(want) < TextToSpeech.LANG_AVAILABLE && w.he) setLanguage(Locale.forLanguageTag("iw"))
+            voices?.filter { it.locale.language == want.language && !it.isNetworkConnectionRequired }?.minByOrNull { it.quality * -1 }?.let { voice = it }
+            setPitch(1.55f); setSpeechRate(1.05f)
+        } }
         onDispose { tts[0]?.shutdown() }
     }
+    /** A direction in the app's language all the way: in English, Hebrew street names in English (an English voice cannot read Hebrew). */
+    fun inLang(text: String) = if (w.he) text else HebrewLatin.english(text, holder.streetNames)
     fun say(text: String) { if (muted || calib != 2) return; voice.chirp(2); scope.launch { delay(260); tts[0]?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "walk") } }
     fun buzz(vararg ms: Long) { runCatching { context.getSystemService(android.os.Vibrator::class.java)?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, *ms), -1)) } }
     fun here(): LatLng? = holder.userGeo ?: testFrom ?: sensors.location?.let { LatLng(it.latitude, it.longitude) }
@@ -294,7 +303,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                 }
             }.onSuccess { (data, plan) ->
                 if (route !== r) return@onSuccess
-                holder.plan = plan
+                holder.plan = plan; holder.streetNames = data.names
                 Log.i(TAG, "route sidewalks: map has them on the right ${(plan.mapped(-1) * 100).roundToInt()}%, left ${(plan.mapped(1) * 100).roundToInt()}%, " +
                     "route on walkways ${(plan.walkShare() * 100).roundToInt()}%; ${data.sidewalks.size} sidewalk lines, ${data.walks.size} paths, ${data.roads.size} roads, ${data.buildings.size} buildings")
             }.onFailure { Log.w(TAG, "route sidewalks failed: ${it.message}") }
@@ -563,8 +572,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             for ((cue, step) in n.update(me, acc, now / 1000.0)) {
                                 Log.i(TAG, "cue $cue ${step?.instruction}")
                                 when (cue) {
-                                    Navigator.Cue.PREPARE -> { say(w.t("בעוד ${w.meters(n.state.toNext)}, ", "In ${w.meters(n.state.toNext)}, ") + step!!.instruction); buzz(60) }
-                                    Navigator.Cue.NOW -> { say(step!!.instruction); buzz(80, 120, 80); lookUp = now }
+                                    Navigator.Cue.PREPARE -> { say(w.t("בעוד ${w.meters(n.state.toNext)}, ", "In ${w.meters(n.state.toNext)}, ") + inLang(step!!.instruction)); buzz(60) }
+                                    Navigator.Cue.NOW -> { say(inLang(step!!.instruction)); buzz(80, 120, 80); lookUp = now }
                                     Navigator.Cue.ARRIVED -> { say(w.t("הגענו! כל הכבוד!", "We made it! Well done!")); buzz(200, 100, 200); partyAt = now }
                                     Navigator.Cue.OFF_ROUTE -> if (!holder.rerouting && now - holder.lastReroute > 15000) { holder.rerouting = true; holder.lastReroute = now; say(w.t("מחשב מסלול מחדש", "Recalculating")); fetch(me) }
                                 }
@@ -828,7 +837,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         error != null -> error!!
                         st?.arrived == true -> w.t("הגעת ליעד", "You have arrived")
                         st?.offRoute == true -> w.t("מחשב מסלול מחדש…", "Recalculating…")
-                        step != null -> step.instruction
+                        step != null -> inLang(step.instruction)
                         sensors.location.let { it == null || it.accuracy > 20f } && route == null -> w.t("מחפש את המיקום המדויק שלך", "Finding your exact location") + (sensors.location?.let { w.t(" (±${it.accuracy.roundToInt()} מ׳)", " (±${it.accuracy.roundToInt()} m)") } ?: "…")
                         else -> w.t("מחפש מסלול הליכה…", "Finding a walking route…")
                     }, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
