@@ -423,3 +423,23 @@ class EnglishTest {
         assertEquals("Turn right", HebrewLatin.english("Turn right"))
     }
 }
+
+class SceneLabelsTest {
+    @Test fun onlyWalkableSurfacesCount() {
+        assertEquals(true, SceneLabels.judge(SceneLabels.SIDEWALK to 200))
+        assertEquals(true, SceneLabels.judge(SceneLabels.ROAD to 60))
+        assertEquals(true, SceneLabels.judge(SceneLabels.TERRAIN to 150))
+        assertEquals(false, SceneLabels.judge(SceneLabels.STRUCTURE to 200))      // a fence, a wall
+        assertEquals(false, SceneLabels.judge(SceneLabels.BUILDING to 180))       // a window sill
+        assertNull(SceneLabels.judge(SceneLabels.OBJECT to 40))                   // unsure: not trusted
+        assertNull(SceneLabels.judge(SceneLabels.UNLABELED to 255))
+        assertNull(SceneLabels.judge(null))
+    }
+    @Test fun indoorsHidesTheTrail() {
+        val c = SurfaceConfidence(); var t = 0L
+        repeat(60) { t += 33; c.update(t, true, 100, 6, 0.05, false, 0.0) }
+        assertEquals(SurfaceConfidence.State.GOOD, c.state)
+        repeat(90) { t += 33; c.update(t, true, 100, 6, 0.05, false, 0.0, indoor = true) }
+        assertEquals(SurfaceConfidence.State.LOST, c.state)
+    }
+}

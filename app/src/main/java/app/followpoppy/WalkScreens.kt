@@ -70,6 +70,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -101,6 +102,9 @@ import com.google.ar.core.HitResult
 import com.google.ar.core.StreetscapeGeometry
 import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
+import io.github.sceneview.ar.camera.ARCameraStream
+import io.github.sceneview.ar.createARCameraStream
+import io.github.sceneview.ar.rememberARCameraStream
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.scene.SceneUnderstanding
 import io.github.sceneview.math.Scale
@@ -211,6 +215,10 @@ private fun floorHit(hr: HitResult, minUp: Float = 0.8f, inPolygon: Boolean = tr
     else -> false
 }
 
+private const val OCCLUSION_MATERIAL = "materials/poppy_camera_depth.filamat"
+/** The turn's sign over the corner shows from this close (m). */
+private const val TURN_SIGN_M = 45.0
+
 /** The floor is this far below a hand-held phone (m): a bed (~1 m below) or a table is not the floor. */
 private const val FLOOR_MIN = 1.05
 private const val FLOOR_MAX = 2.0
@@ -244,7 +252,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
     var partyAt by remember { mutableStateOf(0L) }
     var mapOpen by remember { mutableStateOf(false) }
     var seeGround by remember { mutableStateOf(true) }
-    var arLost by remember { mutableStateOf(false) }              // ARCore stopped tracking: the trail is hidden, say what to do
+    var arLost by remember { mutableStateOf(false) }
+    var indoors by remember { mutableStateOf(false) }             // the camera's picture says: inside a building              // ARCore stopped tracking: the trail is hidden, say what to do
     var turnAround by remember { mutableStateOf<Float?>(null) }   // degrees to turn (+ right) when the path is not in front of you
     var tooDark by remember { mutableStateOf(false) }
     // the scan before the walk: 0 = find the floor, 1 = look at the street (VPS), 2 = walking
@@ -271,6 +280,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         val dots = ArrayDeque<V3>(); @Volatile var tap: FloatArray? = null; var tapped = false; var lookFrom = 0L; var foundAt = 0L
         val profile = GroundProfile(); val conf = SurfaceConfidence(); var rayCell = 0; var rayAt = 0L
         // the sidewalk: the map around the route, the plan (how far left / right), the side you walk on, the line to draw
+        val labels = SceneLabels()                                   // what each part of the picture is (sidewalk, road, fence …)
         @Volatile var streetNames: Map<String, String> = emptyMap()   // Hebrew street name → English (English mode)
         @Volatile var plan: SidewalkPlan? = null; var walk: WalkLine? = null; var walkRoute: Route? = null; var side = 0; var sideSince = 0L
         var approach = false                                      // far from the route: no AR yet, an arrow to it
@@ -288,7 +298,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         onDispose { tts[0]?.shutdown() }
     }
     /** A direction in the app's language all the way: in English, Hebrew street names in English (an English voice cannot read Hebrew). */
-    fun inLang(text: String) = if (w.he) text else HebrewLatin.english(text, holder.streetNames)
+    fun inLang(text: String) = (if (w.he) text else HebrewLatin.english(text, holder.streetNames)).trim().trimEnd('.', ' ')
     fun say(text: String) { if (muted || calib != 2) return; voice.chirp(2); scope.launch { delay(260); tts[0]?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "walk") } }
     fun buzz(vararg ms: Long) { runCatching { context.getSystemService(android.os.Vibrator::class.java)?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, *ms), -1)) } }
     fun here(): LatLng? = holder.userGeo ?: testFrom ?: sensors.location?.let { LatLng(it.latitude, it.longitude) }
@@ -350,7 +360,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                 lastAt = at; lastT = SystemClock.uptimeMillis()
                 val h = if (heading.isNaN()) 0.0 else heading
                 runCatching { withContext(Dispatchers.IO) {
-                    miniMap = URL(api.staticMapUrl(r, at, 16.6, h, 200, 200)).openStream().use { BitmapFactory.decodeStream(it) }
+                    miniMap = URL(api.staticMapUrl(r, at, 16.9, h, 200, 200)).openStream().use { BitmapFactory.decodeStream(it) }
                 } }.onFailure { Log.w(TAG, "map image: ${it.message}") }
                 if (smoke) miniMap?.let { DebugCapture.screen("walk_minimap", it, 300) }
             }
@@ -369,13 +379,19 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
         }
     }
 
+    // things in front of the trail hide it (a fence, a pole, a person), with our own camera material that never lets the
+    // ground the trail lies on hide it (tools/materials/poppy_camera_depth.mat, built in CI); without it, no occlusion
+    val occlusionOk = remember { runCatching { context.assets.open(OCCLUSION_MATERIAL).close(); true }.getOrDefault(false) }
+    val cameraStream = rememberARCameraStream(materialLoader) {
+        if (occlusionOk) ARCameraStream(materialLoader, depthOcclusionMaterialFile = OCCLUSION_MATERIAL) else createARCameraStream(materialLoader)
+    }
     Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { viewW = it.width; viewH = it.height }) {
         ARSceneView(
             modifier = Modifier.fillMaxSize(),
-            engine = engine, modelLoader = modelLoader, materialLoader = materialLoader,
+            engine = engine, modelLoader = modelLoader, materialLoader = materialLoader, cameraStream = cameraStream,
             planeFindingMode = Config.PlaneFindingMode.HORIZONTAL,
             depthMode = Config.DepthMode.AUTOMATIC,
-            sceneUnderstanding = SceneUnderstanding(occlusion = false, lighting = false, physics = false, planeVisualization = false),   // depth stays on for finding the street; occlusion hid the whole trail in the dark
+            sceneUnderstanding = SceneUnderstanding(occlusion = occlusionOk, lighting = false, physics = false, planeVisualization = false),
             onSessionUpdated = { session, frame ->
                 // once: ARCore Geospatial (Street View VPS) with a Google Cloud key, and depth (finds the street even without planes)
                 if (!holder.geoConfigured) {
@@ -389,12 +405,16 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             c.streetscapeGeometryMode = Config.StreetscapeGeometryMode.ENABLED
                             changed = true
                         }
+                        // what each part of the picture is: the trail only on sidewalk / road / grass, not on a sill or a fence
+                        if (runCatching { session.isSemanticModeSupported(Config.SemanticMode.ENABLED) }.getOrDefault(false)) {
+                            c.semanticMode = Config.SemanticMode.ENABLED; changed = true
+                        }
                         if (changed) runCatching { session.configure(c) }.onFailure {
                             Log.w(TAG, "streetscape not available: ${it.message}")
                             c.streetscapeGeometryMode = Config.StreetscapeGeometryMode.DISABLED; session.configure(c)
                         }
                         holder.streetscape = c.streetscapeGeometryMode == Config.StreetscapeGeometryMode.ENABLED
-                        Log.i(TAG, "session geo=${c.geospatialMode} streetscape=${c.streetscapeGeometryMode} depth=${c.depthMode}")
+                        Log.i(TAG, "session geo=${c.geospatialMode} streetscape=${c.streetscapeGeometryMode} depth=${c.depthMode} semantics=${c.semanticMode} occlusion=$occlusionOk")
                     }.onFailure { Log.w(TAG, "session config: ${it.message}") }
                 }
                 val cam = frame.camera
@@ -499,8 +519,12 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     // the street's height: hit tests at several points low in the view (floor planes and depth), floor = low
                     // in their spread; with nothing seen yet, 1.4 m below the phone
                     val tNow = SystemClock.uptimeMillis()
+                    if (holder.frames % 4 == 0L) holder.labels.update(frame, tNow, lookingAhead = -z[1] > -0.4f)
                     if (viewW > 0 && holder.frames % 4 == 0L) for (pr in GROUND_PROBES) {
-                        runCatching { frame.hitTest(viewW * pr[0], viewH * pr[1]) }.getOrNull()?.firstOrNull { hr ->
+                        val px = viewW * pr[0]; val py = viewH * pr[1]
+                        // the picture there must be something to walk on (not a sill, a glass pane, a table, a fence)
+                        if (holder.labels.walkable(frame, px, py) == false) continue
+                        runCatching { frame.hitTest(px, py) }.getOrNull()?.firstOrNull { hr ->
                             val y = hr.hitPose.ty(); val t = hr.trackable
                             // the floor only: below hip height, and for depth points a surface facing up (not a wall or a fence)
                             y < camPos.y - FLOOR_MIN && y > camPos.y - FLOOR_MAX && floorHit(hr)
@@ -511,7 +535,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     }
                     holder.tap?.let { tp ->
                         holder.tap = null
-                        runCatching { frame.hitTest(tp[0], tp[1]) }.getOrNull()?.firstOrNull { hr ->
+                        if (holder.labels.walkable(frame, tp[0], tp[1]) != false) runCatching { frame.hitTest(tp[0], tp[1]) }.getOrNull()?.firstOrNull { hr ->
                             val y = hr.hitPose.ty(); val t = hr.trackable
                             y < camPos.y - 0.6 && y > camPos.y - 2.4 && floorHit(hr, 0.7f, false)
                         }?.let { hr -> holder.ground.addStrong(tNow, hr.hitPose.ty().toDouble()); holder.tapped = true; buzz(30) }
@@ -527,7 +551,9 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                     }
                     // how sure we are of the street surface: the whole trail, a shorter one, or none (and no Poppy) until it is seen
                     val floorAgo = maxOf(holder.ground.lastHitAt, holder.rayAt).let { if (it == 0L) Long.MAX_VALUE else tNow - it }
-                    val cs = holder.conf.update(tNow, true, floorAgo, holder.ground.count(tNow), holder.ground.spread(tNow), terrain != null, if (calib == 2) navState?.offset ?: 0.0 else 0.0)
+                    val inside = calib == 2 && holder.labels.indoors(tNow)
+                    if (indoors != inside) indoors = inside
+                    val cs = holder.conf.update(tNow, true, floorAgo, holder.ground.count(tNow), holder.ground.spread(tNow), terrain != null, if (calib == 2) navState?.offset ?: 0.0 else 0.0, inside)
                     if (arLost) arLost = false
                     val sees = cs == SurfaceConfidence.State.GOOD || cs == SurfaceConfidence.State.PARTIAL || tNow - holder.startedAt < 4000
                     if (seeGround != sees) seeGround = sees
@@ -679,7 +705,10 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                                     val l = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
                                     val o = floatArrayOf(camPos.x.toFloat(), camPos.y.toFloat(), camPos.z.toFloat())
                                     val d = floatArrayOf((dx / l).toFloat(), (dy / l).toFloat(), (dz / l).toFloat())
-                                    runCatching { frame.hitTest(o, 0, d, 0) }.getOrNull()?.firstOrNull { hr ->
+                                    // where that ray meets the picture must be walkable too (a hedge or a fence is not the street's height)
+                                    val onScreen = pj.screen(tgt)
+                                    val walk = onScreen?.let { holder.labels.walkable(frame, it[0], it[1]) }
+                                    if (walk != false) runCatching { frame.hitTest(o, 0, d, 0) }.getOrNull()?.firstOrNull { hr ->
                                         val y = hr.hitPose.ty()
                                         y < camPos.y - 0.6 && y > camPos.y - 4.0 && (floorHit(hr) || (hr.trackable is DepthPoint && hr.hitPose.yAxis[1] > 0.8f))
                                     }?.let { hr ->
@@ -735,7 +764,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         if (viewW > 0) {
                             val y = holder.groundY + 0.02
                             val step = r.steps.getOrNull(st.stepIndex)
-                            val turn = step?.takeIf { it.type != "arrive" && st.toNext < 120 }?.let { pj.screen(toArR(wr.line.at(sw(it.along)), y + 2.0)) }
+                            // the turn's sign stands at the corner only when it is near (the card on top says it before that)
+                            val turn = step?.takeIf { it.type != "arrive" && st.toNext < TURN_SIGN_M }?.let { pj.screen(toArR(wr.line.at(sw(it.along)), y + 2.0)) }
                             val dpt = if (st.remaining < 150) pj.screen(toArR(wr.line.at(wr.length), y + 2.4)) else null
                             overlay = Overlay(turn, dpt, poppyHead(pj, pp))
                         }
@@ -791,7 +821,9 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                 avoid(turnL, listOfNotNull(bub)); avoid(destL, listOfNotNull(bub, turnL))
                 turnL?.let { l ->
                     val st = navState!!
-                    Column(Modifier.absoluteOffset(x = l.x.dp, y = l.y.dp).width(140.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // smaller when further: it reads as standing at the corner, not floating in front of you
+                    val k = (1.0 - (st.toNext - 8.0) / (TURN_SIGN_M - 8.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
+                    Column(Modifier.absoluteOffset(x = l.x.dp, y = l.y.dp).width(140.dp).graphicsLayer { scaleX = k; scaleY = k; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f); alpha = (0.55f + 0.45f * k) }, horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(Modifier.clip(RoundedCornerShape(14.dp)).background(Color.White).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             TurnIcon(step!!, Ink, 22); Spacer(Modifier.width(6.dp)); Text(w.dist(st.toNext), color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
                         }
@@ -850,6 +882,7 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
             }
             if (tooDark && !dark && !mapMode) Hint(w.t("חשוך מדי בשביל AR מדויק. ביום זה עובד הכי טוב; עכשיו אפשר להניח את הטלפון שטוח וללכת לפי המפה.", "Too dark for accurate AR. It works best in daylight; for now lay the phone flat and follow the map."), Amber)
             else if (calib < 2) Unit
+            else if (indoors && !dark && !mapMode && outside == null) Hint(w.t("נראה שאתה בתוך בניין. צא החוצה, ופופי תחכה לך על המדרכה.", "Looks like you're indoors. Step outside and Poppy will be waiting on the sidewalk."), Amber)
             else if (arLost && !dark && !mapMode) Hint(w.t("ה-AR איבד את המקום. זוז לאט, כוון את המצלמה לרחוב ולמדרכה, ודאג שיש מספיק אור.", "AR lost its place. Move slowly, point the camera at the street and the sidewalk, and make sure there is enough light."), Amber)
             else if (dark) Hint(w.t("חשוך מדי ל-AR. הנח את הטלפון שטוח כדי לראות מפה.", "Too dark for AR. Lay the phone flat to see the map."), Amber)
             else if (BuildConfig.AR_GEO_KEY.isNotEmpty() && !vps && aligned && !mapMode && outside == null && SystemClock.uptimeMillis() - holder.startedAt < 40_000) Hint(w.t("לדיוק מלא: כוון לרגע את המצלמה לבניינים מסביב", "For full accuracy: point the camera at the buildings around you for a moment"))

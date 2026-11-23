@@ -15,6 +15,18 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '9.8.1' }
+      - name: Materials (Filament matc, same version as the app's Filament)
+        continue-on-error: true
+        run: |
+          set -e
+          curl -sSL -o /tmp/filament.tgz https://github.com/google/filament/releases/download/v1.72.1/filament-v1.72.1-linux.tgz
+          mkdir -p /tmp/filament && tar -xzf /tmp/filament.tgz -C /tmp/filament
+          MATC=$(find /tmp/filament -name matc -type f | head -1); echo "matc: $MATC"
+          mkdir -p app/src/main/assets/materials
+          for m in tools/materials/*.mat; do
+            "$MATC" --optimize-size -p mobile -a opengl -a vulkan -o app/src/main/assets/materials/$(basename ${m%.mat}).filamat "$m" 2>&1 | tee -a matc.log
+          done
+          ls -la app/src/main/assets/materials | tee -a matc.log
       - name: Unit tests + APK
         id: build
         env: { MAPBOX_TOKEN: '${{ secrets.MAPBOX_TOKEN }}', GOOGLE_AR_KEY: '${{ secrets.GOOGLE_AR_KEY }}' }
@@ -25,7 +37,7 @@ jobs:
       - name: Publish build log
         if: always()
         run: |
-          OUT=$(mktemp -d); cp build.log $OUT/ 2>/dev/null || echo "no log" > $OUT/build.log
+          OUT=$(mktemp -d); cp build.log $OUT/ 2>/dev/null || echo "no log" > $OUT/build.log; cp matc.log $OUT/ 2>/dev/null || true
           find app/build/test-results -name '*.xml' -exec cp {} $OUT/ \; 2>/dev/null || true
           echo "mapbox=${{ secrets.MAPBOX_TOKEN != '' }} google=${{ secrets.GOOGLE_AR_KEY != '' }}" > $OUT/keys.txt
           cd $OUT && git init -q && git checkout -q -b build-output && git add -A

@@ -2,3 +2,4 @@
 build/
 local.properties
 __pycache__/
+app/src/main/assets/materials/

@@ -102,11 +102,13 @@ class SurfaceConfidence {
 
     /**
      * [tracking]: ARCore is tracking; [floorAgo]: ms since a floor hit (Long.MAX_VALUE: never); [hits]: floor hits in the
-     * last 3 s; [spread]: their spread in m; [terrain]: Google's terrain under you is fresh; [offset]: m from the route.
+     * last 3 s; [spread]: their spread in m; [terrain]: Google's terrain under you is fresh; [offset]: m from the route;
+     * [indoor]: the camera's picture says you are inside a building.
      */
-    fun update(now: Long, tracking: Boolean, floorAgo: Long, hits: Int, spread: Double, terrain: Boolean, offset: Double): State {
+    fun update(now: Long, tracking: Boolean, floorAgo: Long, hits: Int, spread: Double, terrain: Boolean, offset: Double, indoor: Boolean = false): State {
         val want = when {
             !tracking -> State.BROKEN
+            indoor -> State.LOST                                                // the camera sees a room, not a street
             offset > FAR_FROM_ROUTE && floorAgo > 1_500 -> State.LOST            // indoors, away from the street
             floorAgo < 1_500 && hits >= 4 && spread < 0.15 -> State.GOOD
             floorAgo < 5_000 || terrain -> State.PARTIAL

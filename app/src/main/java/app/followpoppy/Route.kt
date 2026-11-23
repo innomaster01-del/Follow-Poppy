@@ -116,11 +116,13 @@ class MapboxApi(private val token: String, var language: String = "en") {
     /** A small street map for the corner / map mode: route in cyan, centred on [center], turned to [bearing]. */
     fun staticMapUrl(route: Route?, center: LatLng, zoom: Double, bearing: Double, w: Int, h: Int): String {
         val overlays = listOfNotNull(
-            route?.let { r -> "path-6+22d3ee-0.9(${URLEncoder.encode(Geo.encodePolyline(thin(r.line.geo, 90)), "UTF-8")})" },
+            route?.let { r -> "path-12+0b1220-0.9(${URLEncoder.encode(Geo.encodePolyline(thin(r.line.geo, 90)), "UTF-8")})" },
+            route?.let { r -> "path-7+22d3ee-1(${URLEncoder.encode(Geo.encodePolyline(thin(r.line.geo, 90)), "UTF-8")})" },
             route?.line?.geo?.last()?.let { "pin-s+f5b841(${it.lng},${it.lat})" },
         ).joinToString(",")
         val b = "%.0f".format(java.util.Locale.US, (bearing % 360 + 360) % 360)
-        return "https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/" + (if (overlays.isEmpty()) "" else "$overlays/") +
+        // navigation-night: dark like the camera screen, but with streets that stand out at this small size
+        return "https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/static/" + (if (overlays.isEmpty()) "" else "$overlays/") +
             "${center.lng},${center.lat},${"%.2f".format(java.util.Locale.US, zoom)},$b/${w}x$h@2x?attribution=false&logo=false&access_token=$token"
     }
 
