@@ -23,6 +23,8 @@ PLAN = [('tencent/Hunyuan3D-2mv', '/shape_generation', False), ('tencent/Hunyuan
 # which characters: the third argument (comma separated), else the girl and the boy
 want = sys.argv[3].split(',') if len(sys.argv) > 3 else ['girl', 'boy']
 names = [n for n in want if os.path.exists(os.path.join(src, f'poppy_{n}_front.png'))]
+# 'textured' (fourth argument): only the textured model (Hunyuan3D-2.1 shape + HD texture painted by its multi-view model)
+if len(sys.argv) > 4 and sys.argv[4] == 'textured': PLAN = [('tencent/Hunyuan3D-2.1', '/generation_all', True)]
 token = os.environ.get('HF_TOKEN') or None
 
 def save(res, name, tag):
@@ -72,6 +74,7 @@ for n in names:
                 elif pn == 'caption': kw[pn] = None
                 elif pn == 'steps': kw[pn] = 30
                 elif pn == 'octree_resolution': kw[pn] = 256
+                elif pn in ('target_face_num', 'face_count', 'max_facenum'): kw[pn] = 60000
                 elif pn == 'check_box_rembg': kw[pn] = True
                 elif pn == 'randomize_seed': kw[pn] = False
                 elif pn == 'seed': kw[pn] = 1234
