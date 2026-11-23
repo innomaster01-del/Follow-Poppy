@@ -145,8 +145,9 @@ def bake(V, G, ref, pics, size=2048, face_y=None, ear_y=None, slant=0.55, mouth=
 
 def shade(P, N, views, depth, to_pic, face_y, ear_y, slant, mouth):
     acc = np.zeros((len(P), 3), np.float32); wsum = np.zeros(len(P), np.float32)
-    head = (P[:, 1] > face_y[0]) & (P[:, 1] < face_y[1]) if face_y else np.zeros(len(P), bool)
-    ear = (P[:, 1] > ear_y) if ear_y else np.zeros(len(P), bool)
+    # soft masks (0..1), so no rule switches at a hard line: the head (below the ears) and the ears
+    head = ss(face_y[0], face_y[0] + 0.04, P[:, 1]) * (1 - ss(face_y[1] - 0.04, face_y[1] + 0.02, P[:, 1])) if face_y else np.zeros(len(P))
+    ear = ss(ear_y - 0.04, ear_y + 0.02, P[:, 1]) if ear_y else np.zeros(len(P))
     in_mouth = np.zeros(len(P), bool)
     if mouth is not None:
         (my0, my1), mxh, mz = mouth
@@ -165,13 +166,14 @@ def shade(P, N, views, depth, to_pic, face_y, ear_y, slant, mouth):
             w = ss(0.15, 0.55, c) ** 2
             # the head: only where it faces the camera (whiskers / brows would smear round it); the mouth's inside always
             hw = ss(slant - 0.12, slant + 0.08, c)
-            w = np.where(head & ~in_mouth, w * hw, w)
+            hm = head * ~in_mouth
+            w = w * (1 - hm) + w * hw * hm
         else:
             w = ss(0.55, 0.9, c) ** 2
-            w = np.where(head, 0, w)                     # the side picture's eye must not land on the cheek
-        w = np.where(ear, w * ss(0.1, 0.4, N[:, 2]), w)   # the ears' backs and outer rims are fur (a soft edge)
+            w = w * (1 - ss(0.0, 0.3, head * 1.0))      # the side picture's eye must not land on the cheek
+        w = w * (1 - ear) + w * ss(0.1, 0.4, N[:, 2]) * ear   # the ears' backs and outer rims are fur (a soft edge)
         # the top of the head, where the ears grow: the picture's ear colour must not run onto it
-        w = w * (1 - ss(0.95, 1.03, P[:, 1]) * (1 - ss(0.65, 0.9, N[:, 2])) * (~ear))
+        w = w * (1 - ss(0.95, 1.03, P[:, 1]) * (1 - ss(0.65, 0.9, N[:, 2])) * (1 - ear))
         w = w * vis
         # bilinear sample
         x0 = np.floor(X).astype(int).clip(0, W - 2); y0 = np.floor(Y).astype(int).clip(0, H - 2)

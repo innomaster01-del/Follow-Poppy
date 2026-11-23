@@ -71,6 +71,9 @@ def soften(im, strong=False):
         for cx, cy, rx, ry in bp.find_eyes(im):
             keep |= ((xx - cx) / (rx * 1.6)) ** 2 + ((yy - cy) / (ry * 1.6)) ** 2 < 1
         faint |= bluish & (sat < 0.55) & (mx > 0.72) & (mn > 0.3) & ~keep
+    # never the ears (their pale inner colour is paint, not light): the top quarter of the character
+    m = (np.abs(a - 1).sum(2) > 0.18); rows = np.where(m.sum(1) > 2)[0]
+    if len(rows): faint &= np.arange(mx.shape[0])[:, None] > rows[0] + (rows[-1] - rows[0]) * 0.25
     k = np.where((bluish | strong) & (sat >= 0.3), 1.0, np.clip((0.3 - sat) / 0.15, 0, 1))[..., None] * faint[..., None]
     grey = (a.mean(2, keepdims=True) * 0.6 + mx[..., None] * 0.4)
     warm = grey * np.array([1.0, 0.985, 0.975])
