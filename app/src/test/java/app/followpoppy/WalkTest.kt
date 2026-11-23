@@ -143,7 +143,7 @@ class PoppyGuideTest {
         val g = PoppyGuide(); val says = HashSet<PoppyGuide.Say>(); var pose = g.step(dt, 0.0, 0.0, 200.0, false, emptyList(), feet(0.0), cam(0.0), ground)
         repeat(30 * 52) { pose = g.step(dt, 0.0, 0.0, 200.0, false, emptyList(), feet(0.0), cam(0.0), ground); g.say?.let { says.add(it) } }
         assertTrue(says.containsAll(listOf(PoppyGuide.Say.COME_ON, PoppyGuide.Say.YAWN, PoppyGuide.Say.ZZZ)))
-        assertTrue(pose.sit > 0.9); assertEquals(PoppyGuide.Eyes.CLOSED, pose.eyes)  // asleep, sitting
+        assertEquals(PoppyGuide.Act.MEDITATE, pose.act); assertEquals(PoppyGuide.Eyes.CLOSED, pose.eyes)  // sitting on her cushion, eyes closed
         var me = 0.0; repeat(30 * 2) { me += 1.4 * dt; g.step(dt, me, 0.0, 200.0, false, emptyList(), feet(me), cam(me), ground); g.say?.let { says.add(it) } }
         assertTrue(says.contains(PoppyGuide.Say.WAKE))                                 // you walk on: she wakes up
     }
@@ -155,7 +155,7 @@ class PoppyGuideTest {
             me = minOf(me + 1.4 * dt, 40.0)
             val p = g.step(dt, me, 0.0, 200.0, false, turns, feet(me), cam(me), ground)
             g.say?.let { says.add(it) }
-            if (p.armLeft > 1.5 && p.faceYaw > 0.5) pointed = true                     // her left arm up, head turned left
+            if (p.act == PoppyGuide.Act.POINT_L && p.faceYaw > 0.5) pointed = true     // points left, head turned left
             if (lookedAt < 0) maxBeforeLook = maxOf(maxBeforeLook, g.along)
             if (g.say == PoppyGuide.Say.LOOK && lookedAt < 0) lookedAt = g.along
             if (!g.walking && kotlin.math.abs(g.along - 20.0) < 0.4) stoppedAtCorner = true
@@ -180,11 +180,12 @@ class PoppyGuideTest {
     }
 
     @Test fun staysOnTheRouteAndPartiesAtTheEnd() {
-        val g = PoppyGuide(); var maxHop = 0.0; var p = g.step(dt, 48.0, 0.0, 50.0, true, emptyList(), feet(48.0), cam(48.0), ground)
-        repeat(30 * 4) { p = g.step(dt, 48.0, 0.0, 50.0, true, emptyList(), feet(48.0), cam(48.0), ground); maxHop = maxOf(maxHop, p.hop) }
+        val g = PoppyGuide(); var p = g.step(dt, 48.0, 0.0, 50.0, true, emptyList(), feet(48.0), cam(48.0), ground)
+        val acts = HashSet<PoppyGuide.Act>()
+        repeat(30 * 10) { p = g.step(dt, 48.0, 0.0, 50.0, true, emptyList(), feet(48.0), cam(48.0), ground); acts.add(p.act) }
         assertEquals(50.0, g.along, 1e-6)                                             // never past the destination
-        assertTrue(maxHop > 0.1); assertEquals(PoppyGuide.Eyes.HAPPY, p.eyes); assertEquals(PoppyGuide.Mouth.GRIN, p.mouth)
-        assertTrue(p.armLeft > 2 && p.armRight > 2)                                    // both arms up
+        assertTrue(acts.containsAll(listOf(PoppyGuide.Act.CHEER, PoppyGuide.Act.PIN))) // jumps for joy, then hugs the pin
+        assertEquals(PoppyGuide.Eyes.HAPPY, p.eyes); assertEquals(PoppyGuide.Mouth.GRIN, p.mouth)
     }
 }
 

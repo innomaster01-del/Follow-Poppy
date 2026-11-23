@@ -5,11 +5,12 @@ ArmL (−x) / ArmR (+x) at the shoulders with ElbowL / ElbowR, FootL / FootR, Ta
 
 Props, hidden until a move shows them (scale ~0 / 1, switched by the app like the faces): PropPin (a map pin she hugs),
 PropPhone (in her −x hand), PropArrowL / PropArrowR (a glowing navigation arrow in the hand that does not point),
-PropRing (a glowing ring on the ground, for meditating).
+PropRing (a glowing ring on the ground) and PropCushion (the round cushion she sits on), for meditating.
 
 Clips (index = what the app plays):
   0 walk (0.56 s, a bouncy run)  1 idle (2.4 s)
-  2 thumbs (thumbs up, wink)     3 point_l / 4 point_r (points the way, arrow in the other hand)
+  2 thumbs (thumbs up, wink)     3 point_l / 4 point_r (points the way, arrow in the other hand; arms only,
+                                 played over the walk)
   5 pin (hugs the pin)           6 peek (leans out to the side, wink)
   7 cheer (jumps, arms up)       8 phone (looks at the phone, points at it)
   9 think (hand to the chin)    10 ok (hand up by the face, wink)
@@ -157,10 +158,9 @@ def clips():
             w = 0.06 * math.sin(2 * p)
             pa = 'ArmR' if side > 0 else 'ArmL'; pe = 'ElbowR' if side > 0 else 'ElbowL'
             ha = 'ArmL' if side > 0 else 'ArmR'; he = 'ElbowL' if side > 0 else 'ElbowR'
-            return still(Body=((0, 0, 0), body(turn=0.25 * side, roll=0.05 * side)), Face=(None, qmul(quat(Y, 0.45 * side), quat(Z, -0.06 * side))),
-                         **{pa: (None, reach(side, (0.19 * side + 0.8 * side, 0.5 + 0.5 + w, 0.05 + 0.35))), pe: (None, elbow(side, 0.0)),
-                            ha: (None, reach(-side, (-0.13 * side, 0.58, 0.38))), he: (None, elbow(-side, 0.2, 0.6))},
-                         EarL=(None, quat(Z, 0.05)), EarR=(None, quat(Z, -0.05)), Tail=(None, quat(Y, 0.25 * math.sin(2 * p))))
+            # only the arms: the app plays this over the walk or the stand (legs keep walking), and turns the head itself
+            return {pa: (None, reach(side, (0.19 * side + 0.8 * side, 0.5 + 0.5 + w, 0.05 + 0.35))), pe: (None, elbow(side, 0.0)),
+                    ha: (None, reach(-side, (-0.13 * side, 0.58, 0.38))), he: (None, elbow(-side, 0.2, 0.6))}
         return f
     make('point_l', 1.2, 13, pointer(-1), ('PropArrowR',))
     make('point_r', 1.2, 13, pointer(1), ('PropArrowL',))
@@ -224,15 +224,16 @@ def clips():
 
     # 11 meditate: sits low, feet in and forward (cross-legged), hands on the knees, slow breathing, ears at rest
     def meditate(p, t):
-        br = 0.008 * (1 - math.cos(p))
+        # she sits ON a round cushion (top 0.1 m), legs crossed in front on it, hands on the knees, slow breathing
+        br = 0.006 * (1 - math.cos(p))
         return {
-            'Body': ((0, -0.2 + br, 0.02), body(lean=0.05)), 'Face': (None, quat(X, 0.05)),
-            'FootL': ((0.0, 0.2, 0.2), qmul(quat(Y, 0.9), quat(Z, -0.4))), 'FootR': ((0.0, 0.17, 0.22), qmul(quat(Y, -0.9), quat(Z, 0.4))),
-            'ArmL': (None, reach(-1, (-0.2, 0.12, 0.3), body_y=-0.2)), 'ArmR': (None, reach(1, (0.2, 0.12, 0.3), body_y=-0.2)),
-            'ElbowL': (None, elbow(-1, 0.3, -0.2)), 'ElbowR': (None, elbow(1, 0.3, -0.2)),
+            'Body': ((0, -0.11 + br, -0.02), body(lean=0.03)), 'Face': (None, quat(X, 0.06)),
+            'FootL': ((-0.1, 0.17, 0.22), qmul(quat(Y, 0.7), quat(X, -0.3))), 'FootR': ((0.1, 0.17, 0.22), qmul(quat(Y, -0.7), quat(X, -0.3))),
+            'ArmL': (None, reach(-1, (-0.27, 0.2, 0.2), body_y=-0.11)), 'ArmR': (None, reach(1, (0.27, 0.2, 0.2), body_y=-0.11)),
+            'ElbowL': (None, elbow(-1, 0.35, -0.15)), 'ElbowR': (None, elbow(1, 0.35, -0.15)),
             'EarL': (None, quat(Z, 0.05 + 0.03 * math.sin(p))), 'EarR': (None, quat(Z, -0.05 - 0.03 * math.sin(p))), 'Tail': (None, quat(Y, 0.0)),
         }
-    make('meditate', 4.0, 25, meditate, ('PropRing',))
+    make('meditate', 4.0, 25, meditate, ('PropRing', 'PropCushion'))
     return out
 
 
@@ -319,3 +320,18 @@ def smooth_normals(V, F):
     fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
     for k in range(3): np.add.at(n, F[:, k], fn)
     return n / (np.linalg.norm(n, axis=1, keepdims=True) + 1e-12)
+
+
+def cushion_mesh(R=0.32, h=0.17, n=40, m=12):
+    """a soft round cushion: a flattened, rounded disc sitting on the ground, top at [h]"""
+    vs = []; fs = []
+    for i in range(m + 1):
+        th = math.pi * i / m                      # 0 top … pi bottom
+        r = R * (math.sin(th) ** 0.45); y = h / 2 + (h / 2) * math.cos(th)
+        for j in range(n):
+            ph = 2 * math.pi * j / n; vs.append((r * math.cos(ph), y, r * math.sin(ph)))
+    for i in range(m):
+        for j in range(n):
+            a = i * n + j; b = i * n + (j + 1) % n; c = (i + 1) * n + j; d = (i + 1) * n + (j + 1) % n
+            fs += [(a, b, c), (b, d, c)]
+    return np.array(vs), np.array(fs)

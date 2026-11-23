@@ -227,7 +227,7 @@ private const val FLOOR_MAX = 2.0
 private val GROUND_PROBES = listOf(floatArrayOf(0.5f, 0.72f), floatArrayOf(0.3f, 0.82f), floatArrayOf(0.7f, 0.82f), floatArrayOf(0.5f, 0.9f), floatArrayOf(0.2f, 0.95f), floatArrayOf(0.8f, 0.95f))
 
 /** What is drawn over the camera this frame (screen pixels): the turn label, the destination flag, Poppy's head. */
-private class Overlay(val turn: FloatArray?, val dest: FloatArray?, val head: FloatArray?)
+private class Overlay(val turn: FloatArray?, val dest: FloatArray?, val head: FloatArray?, val act: PoppyGuide.Act = PoppyGuide.Act.NONE, val running: Boolean = false, val size: Float = 0f)
 
 @Composable
 private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Place, smoke: Boolean, testFrom: LatLng?, gender: String, onEnd: () -> Unit) {
@@ -771,7 +771,10 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                             // the turn's sign stands at the corner only when it is near (the card on top says it before that)
                             val turn = step?.takeIf { it.type != "arrive" && st.toNext < TURN_SIGN_M }?.let { pj.screen(toArR(wr.line.at(sw(it.along)), y + 2.0)) }
                             val dpt = if (st.remaining < 150) pj.screen(toArR(wr.line.at(wr.length), y + 2.4)) else null
-                            overlay = Overlay(turn, dpt, poppyHead(pj, pp))
+                            // how big she is on screen (for her effects): her head to her feet
+                            val feet = pj.screen(V3(pp.ground.x, pp.ground.y, pp.ground.z)); val hd = poppyHead(pj, pp)
+                            val sz = if (feet != null && hd != null) kotlin.math.abs(feet[1] - hd[1]) else 0f
+                            overlay = Overlay(turn, dpt, hd, pp.act, pp.running, sz)
                         }
                         }
                     }
@@ -840,6 +843,8 @@ private fun NavScreen(w: Words, api: MapboxApi, sensors: WalkSensors, dest: Plac
                         Box(Modifier.width(2.dp).height(36.dp).background(Amber))
                     }
                 }
+                // her effects, as on the character sheet (drawn around her head, scaled to her size on screen)
+                if (head != null && o.size > 20f && !mapMode) PoppyEffects(o.act, o.running, head[0] / density.density, head[1] / density.density, o.size / density.density, gender)
                 // Poppy's speech bubble over her head (centred on her, kept on screen)
                 if (bub != null && b != null) {
                     Column(Modifier.absoluteOffset(x = bub.x.dp, y = bub.y.dp).width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {

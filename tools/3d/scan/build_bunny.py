@@ -62,7 +62,7 @@ class EarPaint:
     its colours are patchy after recolouring): white fur on the back and round the rim, and inside, on the part that
     faces forward and lies more than RIM inside the ear's outline, a smooth gradient: deep in the middle and at the
     base, lighter towards the edge. Pink for her, blue for him; only the colour differs."""
-    RIM = 0.03; FEATHER = 0.006; CELL = 0.002
+    RIM = 0.02; RIM_SHARE = 0.32; FEATHER = 0.005; CELL = 0.002
     COLOURS = {True: (np.array([1.0, 0.62, 0.78]), np.array([0.92, 0.2, 0.5])),      # light, deep (pink)
                False: (np.array([0.62, 0.8, 1.0]), np.array([0.17, 0.47, 0.95]))}    # (blue)
 
@@ -83,18 +83,22 @@ class EarPaint:
             base = np.where(g.any(0))[0]
             if len(base): gp[:, :pad + base[0] + int(0.04 / self.CELL)] |= g[:, base[0]:base[0] + int(0.04 / self.CELL)].any(1)[:, None]
             d = ndimage.distance_transform_edt(gp)[:, pad:] * self.CELL
-            self.maps.append((side, lo, d, d.max()))
+            # the white rim is a fixed share of the ear's half-width at each height (like the drawing), never thin
+            half = ndimage.maximum_filter1d(d.max(0), 9)
+            rim = np.maximum(half * self.RIM_SHARE, self.RIM)
+            self.maps.append((side, lo, d, d.max(), rim))
 
     def __call__(self, P, N, col):
         out = col.copy()
-        for side, lo, d, dmax in self.maps:
+        for side, lo, d, dmax, rimrow in self.maps:
             sel = (P[:, 0] * side > 0.02) & (P[:, 1] > EAR_Y - 0.06)
             if not sel.any(): continue
             ij = ((P[sel, :2] - lo) / self.CELL).astype(int)
             ok = (ij[:, 0] >= 0) & (ij[:, 0] < d.shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < d.shape[1])
             dist = np.zeros(sel.sum()); dist[ok] = d[ij[ok, 0], ij[ok, 1]]
+            rimv = np.full(sel.sum(), 1.0); jj = np.clip(ij[:, 1], 0, len(rimrow) - 1); rimv = rimrow[jj]
             y = P[sel, 1]; nz = N[sel, 2]
-            inner = ss(self.RIM, self.RIM + self.FEATHER, dist) * ss(0.25, 0.45, nz)
+            inner = ss(rimv, rimv + self.FEATHER, dist) * ss(0.3, 0.5, nz)
             t = np.clip(dist / max(dmax, 1e-6), 0, 1)
             deep = np.clip(0.8 * ss(0.15, 0.7, t) + 0.5 * (1 - ss(EAR_Y, EAR_Y + 0.12, y)), 0, 1)
             inside = self.light[None] * (1 - deep[:, None]) + self.deep[None] * deep[:, None]
@@ -113,14 +117,14 @@ class EarPaint:
 
     def _inner(self, P, N):
         res = np.zeros(len(P), bool)
-        for side, lo, d, dmax in self.maps:
+        for side, lo, d, dmax, rimrow in self.maps:
             sel = (P[:, 0] * side > 0.02) & (P[:, 1] > EAR_Y - 0.06)
             if not sel.any(): continue
             ij = ((P[sel, :2] - lo) / self.CELL).astype(int)
             ok = (ij[:, 0] >= 0) & (ij[:, 0] < d.shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < d.shape[1])
             dist = np.zeros(sel.sum()); dist[ok] = d[ij[ok, 0], ij[ok, 1]]
             idx = np.where(sel)[0]
-            res[idx] = (dist > self.RIM * 0.6) & (N[sel, 2] > 0.05)
+            res[idx] = (dist > rimrow[np.clip(ij[:, 1], 0, len(rimrow) - 1)] * 0.8) & (N[sel, 2] > 0.2)
         return res
 
 
@@ -229,7 +233,9 @@ def build(shape, n, out, preview=None):
     m_glow = mat('PropGlow', (0.35, 0.7, 1.0), (0.3, 0.65, 1.0), 0.3)
     arrow_m = prop_mesh([(mv.arrow_mesh(), m_glow, False, None)])
     m_ring = mat('PropRing', (0.3, 0.9, 1.0), (0.25, 0.85, 1.0), 0.3)
-    ring_m = prop_mesh([(mv.ring_mesh(), m_ring, True, None)])
+    ring_m = prop_mesh([(mv.ring_mesh(R=0.34), m_ring, True, None)])
+    m_cush = mat('PropCushion', theme * 0.55 + 0.45, theme * 0.12, 0.8)
+    cush_m = prop_mesh([(mv.cushion_mesh(), m_cush, True, None)])
     g['meshes'] = meshes
     hand = mv.HAND_X - 0.285          # from the elbow to the hand, along the arm
     # a prop in a hand is turned so that, in the move that shows it, it faces you upright (screen / arrow towards you)
@@ -237,14 +243,14 @@ def build(shape, n, out, preview=None):
     cl = {c[0]: c for c in move_clips()}
     def facing(clip, arm_j, elbow_j, tilt=-0.25):
         _, t_, ch, _p = cl[clip]
-        q = Rot.from_quat(ch['Body'][1][0]) * Rot.from_quat(ch[arm_j][1][0]) * Rot.from_quat(ch[elbow_j][1][0])
+        q = (Rot.from_quat(ch['Body'][1][0]) if 'Body' in ch and ch['Body'][1] else Rot.identity()) * Rot.from_quat(ch[arm_j][1][0]) * Rot.from_quat(ch[elbow_j][1][0])
         want = Rot.from_rotvec([tilt, 0, 0])
         return (q.inv() * want).as_quat().tolist()
     props = [('PropPin', 'Body', pin_m, (0, 0.33, 0.2), None),
              ('PropPhone', 'ElbowL', phone_m, (-hand - 0.06, 0.02, 0.0), facing('phone', 'ArmL', 'ElbowL')),
              ('PropArrowL', 'ElbowL', arrow_m, (-hand - 0.07, 0.03, 0.0), facing('point_r', 'ArmL', 'ElbowL', 0.0)),
              ('PropArrowR', 'ElbowR', arrow_m, (hand + 0.07, 0.03, 0.0), facing('point_l', 'ArmR', 'ElbowR', 0.0)),
-             ('PropRing', None, ring_m, (0, 0.002, 0.03), None)]
+             ('PropRing', None, ring_m, (0, 0.002, 0.03), None), ('PropCushion', None, cush_m, (0, 0.0, 0.03), None)]
 
     nodes = [{'name': 'Poppy', 'children': [1, 2]}, {'name': 'PoppyMesh', 'mesh': 0, 'skin': 0}]
     jnode = {}

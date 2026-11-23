@@ -22,10 +22,14 @@ import kotlin.math.sin
  *  - at the destination: happy eyes, a big smile, hopping with both arms up
  */
 class PoppyGuide {
-    enum class Eyes { OPEN, HAPPY, CLOSED }
+    enum class Eyes { OPEN, HAPPY, CLOSED, WINK }
     enum class Mouth { SMILE, GRIN, O }
     enum class Say { LETS_GO, COME_ON, SOON_LEFT, SOON_RIGHT, LEFT_HERE, RIGHT_HERE, LOOK, ALMOST, ARRIVED, WAIT_FOR_ME, WAKE, YAWN, ZZZ }
     enum class Mode { LEAD, TO_YOU, BACK, PARTY }
+    /** What she does, from the character sheet: each is a clip in the model (index), maybe with a prop and an effect. */
+    enum class Act(val clip: Int, val overlay: Boolean = false) {
+        NONE(-1), THUMBS(2), POINT_L(3, true), POINT_R(4, true), PIN(5), PEEK(6), CHEER(7), PHONE(8), THINK(9), OK(10), MEDITATE(11)
+    }
 
     /** A manoeuvre on the route: distance along it, and which way (−1 left, +1 right, 0 straight / crossing). */
     data class Turn(val along: Double, val side: Int)
@@ -38,6 +42,8 @@ class PoppyGuide {
         val armLeft: Double, val armRight: Double,             // raise (radians) of her own left / right arm
         val sit: Double,                                       // 0 standing … 1 sitting
         val onRoute: Boolean,
+        val act: Act = Act.NONE, val actTime: Double = 0.0,    // a move from the sheet (over the walk when act.overlay)
+        val running: Boolean = false,
     )
 
     var along = Double.NaN; private set
@@ -60,6 +66,11 @@ class PoppyGuide {
     private val looked = HashSet<Int>()
     private val said = HashSet<String>()
     private var sit = 0.0
+    private var act = Act.NONE; private var actT = 0.0; private var actUntil = 0.0
+    private var lastSayShown: Say? = null
+    private var partyT = 0.0
+    /** Starts a move for [secs] seconds (unless a more important one is on). */
+    private fun doAct(a: Act, secs: Double) { if (act != a) { act = a; actT = 0.0 }; actUntil = clock + secs }
     private var faceYaw = 0.0
     private var armL = 0.0; private var armR = 0.0
     private var blinkAt = 2.5
@@ -209,7 +220,31 @@ class PoppyGuide {
             !walking && !looking && mode == Mode.LEAD && idleT in 1.0..SIT_AT -> { val t = clock % 2.4; if (t < 0.45) 0.14 * sin(t / 0.45 * PI) else 0.0 }
             else -> 0.0
         }
-        return Pose(p, yaw, hop, if (walking) 0 else 1, if (walking) walkT else idleClipT, eyes, mouth, faceYaw, armL, armR, sit, mode == Mode.LEAD || mode == Mode.PARTY)
+        // the moves from the character sheet, at the moments they fit
+        if (clock > actUntil) act = Act.NONE
+        val newSay = say != lastSayShown; lastSayShown = say
+        when {
+            mode == Mode.PARTY && !walking -> { partyT += dt; doAct(if (partyT % 9.0 < 3.0) Act.CHEER else Act.PIN, 0.3) }   // jumps for joy, then hugs the pin
+            mode == Mode.LEAD && upcoming != null && upcoming.along - me < POINT_FROM -> doAct(if (upcoming.side < 0) Act.POINT_L else Act.POINT_R, 0.3)
+            newSay && say == Say.LETS_GO -> doAct(Act.THUMBS, 2.2)
+            newSay && say == Say.WAKE -> doAct(Act.OK, 1.8)
+            newSay && say == Say.ALMOST -> doAct(Act.PHONE, 3.0)
+            mode == Mode.TO_YOU && !walking -> doAct(Act.THINK, 0.4)
+            mode == Mode.LEAD && !walking && idleT > SIT_AT -> doAct(Act.MEDITATE, 0.4)
+            mode == Mode.LEAD && !walking && idleT > 4 && idleT < SIT_AT && say == Say.COME_ON -> doAct(Act.PEEK, 0.4)
+        }
+        // a move with legs of its own stops her walking clip; a pointing arm plays over the walk
+        if (act != Act.NONE && !act.overlay && walking && act != Act.THUMBS) act = Act.NONE
+        actT += dt
+        val eyes2 = when (act) {
+            Act.THUMBS, Act.OK, Act.PEEK -> if (actT % 2.0 < 1.4) Eyes.WINK else eyes
+            Act.MEDITATE, Act.PIN -> Eyes.HAPPY.takeIf { act == Act.PIN } ?: Eyes.CLOSED
+            Act.CHEER -> Eyes.HAPPY
+            else -> eyes
+        }
+        val mouth2 = when (act) { Act.CHEER, Act.THUMBS, Act.PIN -> Mouth.GRIN; Act.THINK -> Mouth.SMILE; else -> mouth }
+        return Pose(p, yaw, if (act == Act.CHEER) 0.0 else hop, if (walking) 0 else 1, if (walking) walkT else idleClipT, eyes2, mouth2, faceYaw, 0.0, 0.0, 0.0,
+            mode == Mode.LEAD || mode == Mode.PARTY, act, actT, running || (walking && speed > 1.6))
     }
 
     companion object {
@@ -251,6 +286,18 @@ class PoppyRig(engine: Engine, private val node: ModelNode) {
     private val face = inst("Face"); private val body = inst("Body")
     private val armPlusX = inst("ArmR"); private val armMinusX = inst("ArmL")
     private val looks = listOf("EyeOpenL", "EyeOpenR", "EyeHappyL", "EyeHappyR", "EyeClosedL", "EyeClosedR", "MouthSmile", "MouthGrin", "MouthO").associateWith { inst(it) }
+    // the props her moves show (hidden = tiny scale; their rest transform kept)
+    private val props = listOf("PropPin", "PropPhone", "PropArrowL", "PropArrowR", "PropRing", "PropCushion").associateWith { inst(it) }
+    private val propRest = props.mapValues { (_, i) -> FloatArray(16).also { if (i != 0) tm.getTransform(i, it) } }
+    private fun propShown(name: String, on: Boolean) {
+        val i = props[name] ?: 0; if (i == 0) return
+        val r = propRest[name]!!
+        // the rest transform holds a tiny scale: shown = the same rotation and place at full size
+        val sc = kotlin.math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).coerceAtLeast(1e-9f)
+        val m = r.copyOf(); val k = if (on) 1f / sc else 1f
+        for (c in 0 until 3) for (row in 0 until 3) m[c * 4 + row] = r[c * 4 + row] * k
+        tm.setTransform(i, m)
+    }
     private fun rest(i: Int) = FloatArray(16).also { if (i != 0) tm.getTransform(i, it) }
     private val faceRest = rest(face); private val armPlusRest = rest(armPlusX); private val armMinusRest = rest(armMinusX)
     val ok = face != 0 && body != 0
@@ -261,18 +308,33 @@ class PoppyRig(engine: Engine, private val node: ModelNode) {
         node.worldPosition = Position(p.ground.x.toFloat(), (p.ground.y + p.hop).toFloat(), p.ground.z.toFloat())
         val h = p.yaw / 2
         node.worldQuaternion = dev.romainguy.kotlin.math.Quaternion(0f, sin(h).toFloat(), 0f, cos(h).toFloat())
-        if (animator.animationCount > p.clip) {
+        val a = p.act
+        val full = a != PoppyGuide.Act.NONE && !a.overlay && animator.animationCount > a.clip
+        if (!full && animator.animationCount > p.clip) {
             val len = animator.getAnimationDuration(p.clip).toDouble().coerceAtLeast(0.01)
             animator.applyAnimation(p.clip, (p.clipTime % len).toFloat())
         }
+        // a move from the sheet: the whole body, or (pointing) only the arms over the walk
+        if (a != PoppyGuide.Act.NONE && animator.animationCount > a.clip) {
+            val len = animator.getAnimationDuration(a.clip).toDouble().coerceAtLeast(0.01)
+            val t = if (a == PoppyGuide.Act.CHEER || a == PoppyGuide.Act.PEEK || a == PoppyGuide.Act.MEDITATE || a == PoppyGuide.Act.THINK || a == PoppyGuide.Act.PIN || a == PoppyGuide.Act.PHONE || a == PoppyGuide.Act.THUMBS || a == PoppyGuide.Act.OK) p.actTime % len else p.actTime.coerceAtMost(len * 0.5)
+            animator.applyAnimation(a.clip, t.toFloat())
+        }
+        propShown("PropPin", a == PoppyGuide.Act.PIN); propShown("PropPhone", a == PoppyGuide.Act.PHONE)
+        propShown("PropArrowR", a == PoppyGuide.Act.POINT_L); propShown("PropArrowL", a == PoppyGuide.Act.POINT_R)
+        propShown("PropRing", a == PoppyGuide.Act.MEDITATE); propShown("PropCushion", a == PoppyGuide.Act.MEDITATE)
         if (!ok) { animator.updateBoneMatrices(); return }
-        if (p.sit > 0.01) tm.setTransform(body, M4.trs(0.0, -0.035 * p.sit, -0.015 * p.sit, 1 + 0.03 * p.sit, 1 - 0.06 * p.sit, 1 + 0.03 * p.sit))
-        tm.setTransform(face, M4.mul(faceRest, M4.rotY(p.faceYaw)))
+        if (abs(p.faceYaw) > 0.01 && !full) {        // the head turn, on top of the clip's own head pose
+            val cur = FloatArray(16); tm.getTransform(face, cur); tm.setTransform(face, M4.mul(cur, M4.rotY(p.faceYaw)))
+        }
         if (p.armLeft > 0.02 && armPlusX != 0) tm.setTransform(armPlusX, M4.withRotation(armPlusRest, M4.mul(M4.rotZ(p.armLeft), M4.rotX(-0.35))))
         if (p.armRight > 0.02 && armMinusX != 0) tm.setTransform(armMinusX, M4.withRotation(armMinusRest, M4.mul(M4.rotZ(-p.armRight), M4.rotX(-0.35))))
         fun show(name: String, on: Boolean) { val i = looks[name] ?: 0; if (i != 0) tm.setTransform(i, M4.scale(if (on) 1.0 else 1e-4)) }
         for (s in listOf("L", "R")) {
-            show("EyeOpen$s", p.eyes == PoppyGuide.Eyes.OPEN); show("EyeHappy$s", p.eyes == PoppyGuide.Eyes.HAPPY); show("EyeClosed$s", p.eyes == PoppyGuide.Eyes.CLOSED)
+            // a wink: her left eye (model +x, node "...R") closed, the other open
+            val closed = p.eyes == PoppyGuide.Eyes.CLOSED || (p.eyes == PoppyGuide.Eyes.WINK && s == "R")
+            val open = p.eyes == PoppyGuide.Eyes.OPEN || (p.eyes == PoppyGuide.Eyes.WINK && s == "L")
+            show("EyeOpen$s", open); show("EyeHappy$s", p.eyes == PoppyGuide.Eyes.HAPPY); show("EyeClosed$s", closed)
         }
         show("MouthSmile", p.mouth == PoppyGuide.Mouth.SMILE); show("MouthGrin", p.mouth == PoppyGuide.Mouth.GRIN); show("MouthO", p.mouth == PoppyGuide.Mouth.O)
         // she is one skinned body: the joints' final places (clip, then head turn / arms / sitting) move the skin
