@@ -1,4 +1,4 @@
-"""Turns the new character's pictures into the views a 3D model needs: the same bunny standing in a neutral A-pose,
+"""Makes the new character's pictures into the views a 3D model needs: the same bunny standing in a neutral A-pose,
 from the front, the right side and the back (FLUX.1 Kontext, an image-editing model, on Hugging Face). Runs on the
 build server. Writes out/<step>.png and out/log.txt.
 usage: python make_pose.py <source dir> <out dir>"""
