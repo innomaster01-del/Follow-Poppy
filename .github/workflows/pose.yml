@@ -1,0 +1,25 @@
+name: Make character views
+# the new character's pictures → standing front / side / back views (FLUX.1 Kontext), results on the pose-output branch
+on:
+  push:
+    branches: [main]
+    paths: ['tools/3d/make_pose.py', '.github/workflows/pose.yml']
+permissions: { contents: write }
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install gradio_client pillow
+      - name: Views
+        env: { HF_TOKEN: '${{ secrets.HF_TOKEN }}' }
+        run: python tools/3d/make_pose.py tools/3d/source/bunny2 out || true
+      - name: Publish
+        if: always()
+        run: |
+          mkdir -p out; cd out && git init -q && git checkout -q -b pose-output && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "views ${{ github.run_number }}" --allow-empty
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" pose-output

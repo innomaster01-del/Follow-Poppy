@@ -3,7 +3,7 @@ name: Make 3D models
 on:
   push:
     branches: [main]
-    paths: ['tools/3d/source/**', 'tools/3d/make3d.py', '.github/workflows/make3d.yml']
+    paths: ['tools/3d/source/poppy_*', 'tools/3d/make3d.py', '.github/workflows/make3d.yml']
 permissions: { contents: write }
 jobs:
   make:
