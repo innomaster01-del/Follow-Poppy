@@ -16,7 +16,7 @@ jobs:
       - run: pip install gradio_client pillow
       - name: Picture to 3D
         env: { HF_TOKEN: '${{ secrets.HF_TOKEN }}' }
-        run: python tools/3d/make3d.py tools/3d/source out bunny || true
+        run: python tools/3d/make3d.py tools/3d/source out rabbit || true
       - name: Publish
         if: always()
         run: |

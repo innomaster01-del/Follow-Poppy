@@ -16,10 +16,12 @@ from build_poppy import Glb, quat, qmul, ss
 from mesh import load, normals
 from decim import normalize, cluster
 from thin import drop_thin
-from smooth import taubin, face_weight, drop_whiskers, fill_holes
+from smooth import taubin, face_weight, drop_whiskers, fill_holes, close_mouth
 import paint as pm
 import atlas as at
 from recolor import recolor
+from bake import bake
+TEX = 2048
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'source')
 EAR_Y = 1.06
@@ -63,6 +65,12 @@ def soften(im, strong=False):
     faint = ((sat < 0.3) | (bluish & (sat < 0.5) & (mx > 0.8) & (mn > 0.45))) & (mx > 0.55)
     if strong:   # the side picture paints only the body's sides (white fur): any pale colour there is light, not paint
         faint |= (sat < 0.55) & (mx > 0.7) & (mn > 0.35)
+    else:        # the front: the blue shadows under the chin and along the arms too, but never in the eyes
+        keep = np.zeros(mx.shape, bool)
+        yy, xx = np.mgrid[0:mx.shape[0], 0:mx.shape[1]]
+        for cx, cy, rx, ry in bp.find_eyes(im):
+            keep |= ((xx - cx) / (rx * 1.6)) ** 2 + ((yy - cy) / (ry * 1.6)) ** 2 < 1
+        faint |= bluish & (sat < 0.55) & (mx > 0.72) & (mn > 0.3) & ~keep
     k = np.where((bluish | strong) & (sat >= 0.3), 1.0, np.clip((0.3 - sat) / 0.15, 0, 1))[..., None] * faint[..., None]
     grey = (a.mean(2, keepdims=True) * 0.6 + mx[..., None] * 0.4)
     warm = grey * np.array([1.0, 0.985, 0.975])
@@ -107,12 +115,14 @@ def build(shape, n, out, preview=None):
     V, G, cid = cluster(P, F, bp.CELL)
     V, G = fill_holes(V, G)
     V = taubin(V, G, face_weight(V, 0.62, 1.03, half=0.25, zmin=0.02), iters=180)
-    V = taubin(V, G, face_weight(V, 0.635, 0.75, half=0.11, zmin=0.12, soft=0.025), iters=500)   # the carved mouth closed too
+    V = close_mouth(V, (0.635, 0.75, 0.11, 0.1), (0.6, 0.82, 0.17, 0.12))                         # the carved mouth closed
+    V = taubin(V, G, face_weight(V, 0.62, 0.77, half=0.13, zmin=0.1, soft=0.03), iters=60)
     base = {v: Image.open(os.path.join(SRC, f'poppy_bunny_{v}.png')).convert('RGB') for v in ('front', 'right')}
     pics = {v: soften(recolor(im, girl), strong=(v == 'right')) for v, im in base.items()}
     pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y); at.MOUTH = ((0.635, 0.75), 0.11, 0.1); at.SLANT = 0.55   # the whiskers in the picture would streak round the cheeks
-    C = pm.paint(V, G, pics)
-    NV, NG, UV, COL, atlas_img, vid = at.build(V, G, P, F, pics, C)
+    # an HD texture baked texel by texel from the pictures (smooth hand-over between them, plain fur where none sees)
+    NV, NG, UV, atlas_img, vid = bake(V, G, P, pics, size=TEX, face_y=(0.6, EAR_Y), ear_y=EAR_Y, slant=0.62, mouth=((0.635, 0.75), 0.11, 0.1))
+    COL = np.ones((len(NV), 3))
     VN = normals(V, G)[vid]
     J, W = weights(V); J = J[vid]; W = W[vid]
 
@@ -125,7 +135,7 @@ def build(shape, n, out, preview=None):
     sheet, regions = bp.face_variants(pics['front'], girl)
 
     gl = Glb(); g = gl.g
-    base_tex = gl.image(atlas_img, 88); face_tex = gl.image(sheet, 90)
+    base_tex = gl.image(atlas_img, 92); face_tex = gl.image(sheet, 90)
     g['materials'] = [
         {'name': 'Poppy', 'pbrMetallicRoughness': {'baseColorTexture': {'index': base_tex}, 'metallicFactor': 0.0, 'roughnessFactor': 0.85}},
         {'name': 'PoppyFace', 'pbrMetallicRoughness': {'baseColorTexture': {'index': face_tex}, 'metallicFactor': 0.0, 'roughnessFactor': 0.85}},

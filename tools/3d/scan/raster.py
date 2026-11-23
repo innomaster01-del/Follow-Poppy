@@ -22,13 +22,24 @@ def render2(V, G, yaw, size=512, C=None, UV=None, tex=None, pitch=0.0, bg=(240, 
         sel = np.where((e <= n) if n < 32 else (e > 16))[0] if n > 2 else np.where(e <= 2)[0]
         if n > 2 and n < 32: sel = np.where((e > n / 2) & (e <= n))[0]
         if len(sel) == 0: continue
-        B = bary(max(n, 2) if n < 32 else int(min(e.max(), 200)))
+        B = bary(max(n, 2) if n < 32 else int(min(e.max(), 120)))
+        for chunk in np.array_split(sel, max(1, len(sel) * len(B) // 400_000 + 1)):
+            _draw(chunk, B, G, X, Y, Z, N, C, UV, tex, img, zb, S, L)
+    im = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
+    return im.resize((size, size), Image.LANCZOS) if ss > 1 else im
+
+
+def _draw(sel, B, G, X, Y, Z, N, C, UV, tex, img, zb, S, L):
+    if True:
         T = G[sel]
         px = (B @ X[T].T).T; py = (B @ Y[T].T).T; pz = (B @ Z[T].T).T          # (tris, samples)
         nn = np.einsum('sk,tkd->tsd', B, N[T])
         if UV is not None:
             uv = np.einsum('sk,tkd->tsd', B, UV[T]); H, W = tex.shape[:2]
-            col = tex[np.clip((uv[..., 1] * H).astype(int), 0, H - 1), np.clip((uv[..., 0] * W).astype(int), 0, W - 1)] / 255
+            tx = uv[..., 0] * W - 0.5; ty = uv[..., 1] * H - 0.5
+            x0 = np.clip(np.floor(tx).astype(int), 0, W - 2); y0 = np.clip(np.floor(ty).astype(int), 0, H - 2)
+            fx = np.clip(tx - x0, 0, 1)[..., None]; fy = np.clip(ty - y0, 0, 1)[..., None]
+            col = (tex[y0, x0] * (1 - fx) * (1 - fy) + tex[y0, x0 + 1] * fx * (1 - fy) + tex[y0 + 1, x0] * (1 - fx) * fy + tex[y0 + 1, x0 + 1] * fx * fy) / 255
             if C is not None: col = col * np.einsum('sk,tkd->tsd', B, C[T])
         elif C is not None: col = np.einsum('sk,tkd->tsd', B, C[T])
         else: col = np.full(px.shape + (3,), 0.85)
@@ -41,8 +52,6 @@ def render2(V, G, yaw, size=512, C=None, UV=None, tex=None, pitch=0.0, bg=(240, 
         np.maximum.at(zb, (yi, xi), z)
         ok = z >= zb[yi, xi] - 1e-6
         img[yi[ok], xi[ok]] = cc[ok]
-    im = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
-    return im.resize((size, size), Image.LANCZOS) if ss > 1 else im
 
 
 def raster_xy(X, Y, Z, G, col, S, bg=0.0):

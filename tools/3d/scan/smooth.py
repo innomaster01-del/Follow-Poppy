@@ -68,3 +68,22 @@ def fill_holes(P, F, max_loop=400):
         tris = [(loop[(i + 1) % len(loop)], loop[i], ci) for i in range(len(loop))]
         newF.append(np.array(tris))
     return np.concatenate(newP), np.concatenate(newF)
+
+
+def close_mouth(V, box, ring):
+    """A carved open mouth becomes a smooth surface (the picture paints the open mouth on it): a smooth surface
+    z = f(x, y) is fitted to the face around the mouth ([ring]: (y0, y1, half width, z min)) and every vertex in the
+    mouth ([box]: (y0, y1, half width, z min)) that lies behind it is brought onto it."""
+    y0, y1, hw, zmin = ring
+    x, y, z = V[:, 0], V[:, 1], V[:, 2]
+    my0, my1, mhw, mz = box
+    inbox = (y > my0) & (y < my1) & (np.abs(x) < mhw) & (z > mz)
+    fitm = (y > y0) & (y < y1) & (np.abs(x) < hw) & (z > zmin) & ~inbox
+    # keep only the outer surface for the fit: the front-most point per small (x, y) cell
+    A = lambda xx, yy: np.stack([np.ones_like(xx), xx, yy, xx * xx, xx * yy, yy * yy, xx ** 4, yy ** 3], 1)
+    coef, *_ = np.linalg.lstsq(A(x[fitm], y[fitm]), z[fitm], rcond=None)
+    zf = A(x, y) @ coef
+    W = V.copy()
+    m = inbox & (z < zf)
+    W[m, 2] = zf[m] - 0.002
+    return W
