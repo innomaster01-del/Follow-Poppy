@@ -1,0 +1,10 @@
+black-forest-labs/FLUX.1-Kontext-Dev endpoints ['/infer', '/lambda']
+side from stand_front.png
+  params ['guidance_scale', 'input_image', 'prompt', 'randomize_seed', 'seed', 'steps']
+  ok side
+back from stand_front.png
+  params ['guidance_scale', 'input_image', 'prompt', 'randomize_seed', 'seed', 'steps']
+  ok back
+back2 from stand_front.png
+  params ['guidance_scale', 'input_image', 'prompt', 'randomize_seed', 'seed', 'steps']
+black-forest-labs/FLUX.1-Kontext-Dev failed: AppError('This request was blocked by our content filter.')
