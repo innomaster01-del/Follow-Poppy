@@ -15,11 +15,15 @@ STYLE = ('Keep exactly the same character: same face, same big blue eyes, same w
          'inner ears, same blue paw-pin emblem on the chest, same 3D cartoon style. Full body, pure white background, '
          'even soft light, no shadow, no text.')
 STEPS = [
-    ('front', 'pose_think.png', 'Make this bunny stand upright on its hind legs in a neutral A-pose, facing the camera: '
-     'arms relaxed and slightly away from the body, hands open, legs slightly apart, feet flat, looking straight ahead, '
-     'gentle smile, eyes open. ' + STYLE),
-    ('side', 'front', 'Show this exact bunny from its right side: a full profile view facing right, same neutral A-pose. ' + STYLE),
-    ('back', 'front', 'Show this exact bunny from behind: a full back view, same neutral A-pose, the round tail visible. ' + STYLE),
+    # the front came out right (kept as stand_front.png); the side and the back again, asked more firmly
+    ('side', 'stand_front.png', 'Rotate the camera 90 degrees: show this exact bunny in a strict side profile view, facing to the right, '
+     'only one eye visible, the nose pointing right, same neutral A-pose with the arms slightly away from the body, the round tail '
+     'visible on the left. ' + STYLE),
+    ('back', 'stand_front.png', 'Rotate the camera 180 degrees: show this exact bunny from directly behind. We see the back of the head, '
+     'the backs of the ears (white fur), the back of the body and the round fluffy tail in the middle. The face, the eyes and the '
+     'emblem are NOT visible. Same neutral A-pose, arms slightly away from the body. ' + STYLE),
+    ('back2', 'stand_front.png', 'Back view of this bunny character, as if you walked around it and look at its back: back of the head, '
+     'back of the ears, round tail, no face visible. Same pose. ' + STYLE),
 ]
 
 def run(client, api, img, prompt):
