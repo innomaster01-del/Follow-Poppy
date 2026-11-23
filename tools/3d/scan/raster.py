@@ -43,3 +43,22 @@ def render2(V, G, yaw, size=512, C=None, UV=None, tex=None, pitch=0.0, bg=(240, 
         img[yi[ok], xi[ok]] = cc[ok]
     im = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
     return im.resize((size, size), Image.LANCZOS) if ss > 1 else im
+
+
+def raster_xy(X, Y, Z, G, col, S, bg=0.0):
+    """Triangles already in pixel coordinates (X, Y; Z nearer = larger) with a value per vertex → (S x S x C) image and
+    a coverage mask."""
+    C = col.shape[1]
+    img = np.full((S, S, C), bg, float); zb = np.full((S, S), -1e9)
+    e = np.maximum.reduce([np.hypot(X[G[:, i]] - X[G[:, (i + 1) % 3]], Y[G[:, i]] - Y[G[:, (i + 1) % 3]]) for i in range(3)])
+    for lo_, hi_, n in ((0, 1.5, 2), (1.5, 3, 4), (3, 6, 8), (6, 12, 16), (12, 1e9, 40)):
+        sel = np.where((e > lo_) & (e <= hi_))[0]
+        if len(sel) == 0: continue
+        B = bary(n); T = G[sel]
+        px = (B @ X[T].T).T; py = (B @ Y[T].T).T; pz = (B @ Z[T].T).T
+        cc = np.einsum('sk,tkd->tsd', B, col[T])
+        xi = np.clip(px.astype(int).ravel(), 0, S - 1); yi = np.clip(py.astype(int).ravel(), 0, S - 1); z = pz.ravel(); cc = cc.reshape(-1, C)
+        np.maximum.at(zb, (yi, xi), z)
+        ok = z >= zb[yi, xi] - 1e-6
+        img[yi[ok], xi[ok]] = cc[ok]
+    return img, zb > -1e8

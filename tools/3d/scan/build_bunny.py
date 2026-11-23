@@ -16,6 +16,7 @@ from build_poppy import Glb, quat, qmul, ss
 from mesh import load, normals
 from decim import normalize, cluster
 from thin import drop_thin
+from smooth import taubin, face_weight, drop_whiskers, fill_holes
 import paint as pm
 import atlas as at
 from recolor import recolor
@@ -51,13 +52,18 @@ def weights(V):
     return idx.astype(np.uint8), w.astype(np.float32)
 
 
-def soften(im):
+def soften(im, strong=False):
     """Takes the faint coloured light off the white fur (the pictures' rim light is blue or pink, which turns into
     streaks on the model's sides); the ears, eyes, nose, mouth and emblem are strongly coloured and stay."""
     a = np.asarray(im.convert('RGB')).astype(float) / 255
     mx = a.max(2); mn = a.min(2); sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-9), 0)
-    faint = (sat < 0.3) & (mx > 0.55)
-    k = np.clip((0.3 - sat) / 0.15, 0, 1)[..., None] * faint[..., None]
+    # hue: the light blue shadows on the fur (cheeks, rim) are pale even when fairly saturated; the irises are deep
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    bluish = (b >= r) & (b >= g * 0.98)
+    faint = ((sat < 0.3) | (bluish & (sat < 0.5) & (mx > 0.8) & (mn > 0.45))) & (mx > 0.55)
+    if strong:   # the side picture paints only the body's sides (white fur): any pale colour there is light, not paint
+        faint |= (sat < 0.55) & (mx > 0.7) & (mn > 0.35)
+    k = np.where((bluish | strong) & (sat >= 0.3), 1.0, np.clip((0.3 - sat) / 0.15, 0, 1))[..., None] * faint[..., None]
     grey = (a.mean(2, keepdims=True) * 0.6 + mx[..., None] * 0.4)
     warm = grey * np.array([1.0, 0.985, 0.975])
     out = a * (1 - k) + warm * k
@@ -96,10 +102,15 @@ def build(shape, n, out, preview=None):
     girl = n == 'girl'
     P, F = load(shape); P = normalize(P, bp.HEIGHT)
     P, F = drop_thin(P, F)
+    # the face is painted, not carved: whiskers cut off (painted), holes closed, the carved eyes / brows smoothed away
+    P, F = drop_whiskers(P, F, 0.675, 0.81, 0.0)
     V, G, cid = cluster(P, F, bp.CELL)
+    V, G = fill_holes(V, G)
+    V = taubin(V, G, face_weight(V, 0.62, 1.03, half=0.25, zmin=0.02), iters=180)
+    V = taubin(V, G, face_weight(V, 0.635, 0.75, half=0.11, zmin=0.12, soft=0.025), iters=500)   # the carved mouth closed too
     base = {v: Image.open(os.path.join(SRC, f'poppy_bunny_{v}.png')).convert('RGB') for v in ('front', 'right')}
-    pics = {v: soften(recolor(im, girl)) for v, im in base.items()}
-    pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y)
+    pics = {v: soften(recolor(im, girl), strong=(v == 'right')) for v, im in base.items()}
+    pm.EAR_Y = EAR_Y; at.EAR_Y = EAR_Y; at.FACE_Y = (0.6, EAR_Y); at.MOUTH = ((0.635, 0.75), 0.11, 0.1); at.SLANT = 0.55   # the whiskers in the picture would streak round the cheeks
     C = pm.paint(V, G, pics)
     NV, NG, UV, COL, atlas_img, vid = at.build(V, G, P, F, pics, C)
     VN = normals(V, G)[vid]

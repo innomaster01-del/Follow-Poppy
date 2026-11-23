@@ -10,6 +10,8 @@ VIEWS = [('front', np.array([0, 0, 1.]), np.array([1, 0, 0.])), ('right', np.arr
 TILE = 1024
 EAR_Y = 1.0                 # m: above this, the ears (the model is 1.35 m tall here)
 FUR = np.array([0.94, 0.93, 0.93])
+MOUTH = None               # ((y0, y1), half width, z min): where the mouth is
+SLANT = 0.3                # the front picture paints the head only where it faces the camera at least this much
 FACE_Y = None              # (low, high) m: the head's height; its front half is painted from the front picture only
 
 def project(P, ref, img, d, r):
@@ -51,11 +53,17 @@ def build(V, G, dense, denseF, pics, colors):
     # the face: only the front picture paints it. The side picture shows an eye in profile, which would land on the
     # cheek's side as a second pair of eyes; the front half of the head takes no side picture
     if FACE_Y is not None:
-        face = (cen[:, 1] > FACE_Y[0]) & (cen[:, 1] < FACE_Y[1]) & (FN[:, 2] > -0.1)
+        face = (cen[:, 1] > FACE_Y[0]) & (cen[:, 1] < FACE_Y[1])          # the whole head (white fur round the back)
         score[face, 1] = -1; score[face, 3] = -1
-        # the front picture reaches round the cheeks a little further (it is the only one allowed there)
-        f0 = face & (score[:, 0] < 0) & (FN[:, 2] > 0.05) & front_vis
-        score[f0, 0] = FN[f0, 2]
+        # and the front picture only where it looks at the face squarely enough (at a slant it smears the brows and
+        # eyes into streaks round the head), nor on the top of the head (the ears' colour would run down onto it)
+        slant = face & (FN[:, 2] < SLANT)
+        if MOUTH is not None:          # the mouth's inside: the picture's mouth, seen from the front, whatever its slant
+            (my0, my1), mx_, mz = MOUTH
+            slant &= ~((cen[:, 1] > my0) & (cen[:, 1] < my1) & (np.abs(cen[:, 0]) < mx_) & (cen[:, 2] > mz))
+        top = (cen[:, 1] > FACE_Y[0]) & (cen[:, 1] < FACE_Y[1] + 0.05) & (FN[:, 1] > 0.55) & (cen[:, 1] > FACE_Y[1] - 0.15)
+        score[slant | top, 0] = -1
+        face = face | top
     # the ears: only their inside is coloured; their back and outer rim take only the back picture (white fur)
     ear = (cen[:, 1] > EAR_Y) & (FN[:, 2] < 0.25)
     score[ear, 0] = -1; score[ear, 1] = -1; score[ear, 3] = -1
