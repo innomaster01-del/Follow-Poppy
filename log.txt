@@ -1,0 +1,6 @@
+bunnygirl tencent/Hunyuan3D-2.1 endpoints [('image', True), ('mv_image_front', True), ('mv_image_back', True), ('mv_image_left', True), ('mv_image_right', True), ('steps', True), ('guidance_scale', True), ('seed', True), ('octree_resolution', True), ('check_box_rembg', True), ('num_chunks', True), ('randomize_seed', True)]
+bunnygirl tencent/Hunyuan3D-2.1 /generation_all textured
+  failed: AppError("'You have exceeded your ZeroGPU runs limit. Subscribe to Hugging Face PRO to get 40 min of ZeroGPU quota a day - https://huggingface.co/subscribe/pro?from=ZeroGPU'")
+bunnyboy tencent/Hunyuan3D-2.1 endpoints [('image', True), ('mv_image_front', True), ('mv_image_back', True), ('mv_image_left', True), ('mv_image_right', True), ('steps', True), ('guidance_scale', True), ('seed', True), ('octree_resolution', True), ('check_box_rembg', True), ('num_chunks', True), ('randomize_seed', True)]
+bunnyboy tencent/Hunyuan3D-2.1 /generation_all textured
+  failed: AppError("'You have exceeded your ZeroGPU runs limit. Subscribe to Hugging Face PRO to get 40 min of ZeroGPU quota a day - https://huggingface.co/subscribe/pro?from=ZeroGPU'")
