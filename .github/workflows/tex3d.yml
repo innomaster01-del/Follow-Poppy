@@ -1,0 +1,25 @@
+name: Textured bunny
+# one textured model per picture (TRELLIS.2 / Hunyuan3D-2.1), each in its own job (its own address = its own free GPU
+# time), results on the tex-<name> branches
+on:
+  push:
+    branches: [main]
+    paths: ['tools/3d/tex_anon.py', '.github/workflows/tex3d.yml']
+permissions: { contents: write }
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy: { fail-fast: false, matrix: { name: [bunnygirl, bunnyboy] } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install gradio_client pillow
+      - run: python tools/3d/tex_anon.py tools/3d/source/poppy_${{ matrix.name }}_front.png out || true
+      - name: Publish
+        if: always()
+        run: |
+          mkdir -p out; cd out && git init -q && git checkout -q -b tex-${{ matrix.name }} && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "tex ${{ github.run_number }}" --allow-empty
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" tex-${{ matrix.name }}
