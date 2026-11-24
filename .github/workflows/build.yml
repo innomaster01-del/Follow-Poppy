@@ -2,7 +2,7 @@ name: Build APK
 on:
   push:
     branches: [main]
-    paths-ignore: ['tools/3d/source/**', 'tools/3d/make3d.py', '.github/workflows/make3d.yml', 'tools/3d/make_pose.py', '.github/workflows/pose.yml', 'tools/3d/scan/**']
+    paths-ignore: ['tools/3d/source/**', 'tools/3d/make3d.py', '.github/workflows/make3d.yml', 'tools/3d/make_pose.py', '.github/workflows/pose.yml', 'tools/3d/scan/**', 'tools/3d/gen_hd.py', '.github/workflows/hd3d.yml']
   workflow_dispatch:
 permissions: { contents: write }
 jobs:

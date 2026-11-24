@@ -1,0 +1,25 @@
+name: Make the HD bunny
+# FLUX Kontext A-pose → TRELLIS.2 / Hunyuan3D-2.1 textured models, results on the hd-output branch
+on:
+  push:
+    branches: [main]
+    paths: ['tools/3d/gen_hd.py', '.github/workflows/hd3d.yml']
+permissions: { contents: write }
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install gradio_client pillow
+      - name: Generate
+        env: { HF_TOKEN: '${{ secrets.HF_TOKEN }}' }
+        run: python tools/3d/gen_hd.py tools/3d/source/bunny2 out || true
+      - name: Publish
+        if: always()
+        run: |
+          mkdir -p out; cd out && git init -q && git checkout -q -b hd-output && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "hd ${{ github.run_number }}" --allow-empty
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" hd-output
